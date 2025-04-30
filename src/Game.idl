@@ -1,0 +1,76 @@
+module Game {
+
+    typedef sequence<string> StringList;
+    typedef sequence<long> IndexList;
+
+    exception AlreadyLoggedInException {};
+    exception NotEnoughPlayersException {};
+    exception NotLoggedInException {};
+    exception GameTimeOutException {};
+    exception GameNotFoundException {};
+    exception MaxAttemptsReachedException {};
+    exception AlreadyGuessedLetterException {};
+
+    interface PlayerGameService {
+
+        // Get display name of a player
+        string getDisplayName(in string username, in string sessionToken)
+            raises(NotLoggedInException);
+
+        // Get top players in leaderboard
+        StringList getLeaderboards(in long playerID, in string sessionToken)
+            raises(NotLoggedInException);
+
+        // Join game waiting lobby
+        string joinWaitingLobby(in long playerID, in string sessionToken)
+            raises(NotLoggedInException);
+
+        // Register callback object for game events
+        void registerCallBack(in long playerID, in string gameToken, in string sessionToken)
+            raises(NotLoggedInException);
+
+        // Check lobby status (used for countdown/waiting info)
+        string getWaitingLobbyStatus(in string gameToken)
+            raises(NotLoggedInException, GameTimeOutException, NotEnoughPlayersException);
+
+        // Get number of players in the lobby
+        long getNumberOfPlayersJoined(in long playerID, in string sessionToken)
+            raises(NotLoggedInException);
+
+        // Initiate game when enough players have joined
+        long startGame(in long playerID, in string sessionToken)
+            raises(NotEnoughPlayersException);
+
+        // Start a new game round
+        long startRound(in string gameToken, in long playerID, in string sessionToken)
+            raises(GameNotFoundException, NotLoggedInException);
+
+        // Get random word to guess (only at round start)
+        string getRandomWord(in string gameToken, in long roundNumber, in long playerID, in string sessionToken)
+            raises(GameNotFoundException, NotLoggedInException);
+
+        // Submit a letter guess
+        IndexList guessLetter(in string gameToken, in long playerID, in string sessionToken, in char letter)
+            raises(MaxAttemptsReachedException, GameNotFoundException, AlreadyGuessedLetterException, NotLoggedInException);
+
+        // Get remaining wait time before game starts
+        long getRemainingWaitingTime(in string gameToken, in long playerID, in string sessionToken)
+            raises(GameTimeOutException, NotLoggedInException);
+
+        // Get remaining time for the current round
+        long getRemainingRoundTime(in string gameToken, in long playerID, in string sessionToken)
+            raises(GameTimeOutException, NotLoggedInException);
+
+        // Get winner of the current round
+        string getRoundWinner(in string gameToken, in long playerID, in string sessionToken)
+            raises(NotLoggedInException);
+
+        // Get winner of the game
+        string getGameWinner(in string gameToken, in long playerID, in string sessionToken)
+            raises(NotLoggedInException);
+
+        // Get number of wins for a player in current game
+        long getPlayerWins(in string gameToken, in long playerID, in string sessionToken)
+            raises(NotLoggedInException);
+    };
+};

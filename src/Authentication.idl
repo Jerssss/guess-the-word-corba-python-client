@@ -1,0 +1,26 @@
+module Authentication {
+
+    exception AuthenticationException {};
+    exception AlreadyLoggedInException {};
+    exception NotLoggedInException {};
+
+    interface PlayerAuthenticationService {
+        // Player login, returns a session token and player ID
+        string login(in string username, in string password, out long playerID)
+            raises(AuthenticationException, AlreadyLoggedInException);
+
+        // Player logout using session token
+        void logout(in long playerID, in string sessionToken)
+            raises(NotLoggedInException);
+    };
+
+    interface AdminAuthenticationService {
+        // Admin login, returns session token and admin ID
+        string adminLogin(in string username, in string password, out long adminID)
+            raises(AuthenticationException, AlreadyLoggedInException);
+
+        // Admin logout using session token
+        void adminLogout(in long adminID, in string sessionToken)
+            raises(NotLoggedInException);
+    };
+};
