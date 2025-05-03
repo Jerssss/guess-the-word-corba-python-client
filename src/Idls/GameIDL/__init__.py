@@ -6,7 +6,7 @@ import omniORB
 omniORB.updateModule("GameIDL")
 
 # ** 1. Stub files contributing to this module
-import Shared_Files.GameIDL_idl as GameIDL_idl
+import Idls.GameIDL_idl as GameIDL_idl
 
 # ** 2. Sub-modules
 

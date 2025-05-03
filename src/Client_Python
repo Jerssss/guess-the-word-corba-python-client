@@ -2,8 +2,8 @@ import sys
 import omniORB
 from omniORB import CORBA
 from Shared_Files.PlayerAccount import PlayerAccount
-from Shared_Files import GameIDL_idl
-from Shared_Files import PlayerCallBack_idl
+from Idls import GameIDL_idl
+from Idls import PlayerCallBack_idl
 
 class GameLobbyModel:
     def __init__(self, player):
