@@ -1,5 +1,3 @@
-
-
 module AuthenticationIDL {
     exception AuthenticationException {};
     exception AlreadyLoggedInException {};

@@ -6,7 +6,7 @@ import omniORB
 omniORB.updateModule("AuthenticationIDL__POA")
 
 # ** 1. Stub files contributing to this module
-import AuthenticationIDL_idl
+import Idls.AuthenticationIDL_idl as AuthenticationIDL_idl
 
 # ** 2. Sub-modules
 

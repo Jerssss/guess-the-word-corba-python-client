@@ -1,0 +1,144 @@
+import sys
+import omniORB
+from omniORB import CORBA
+from Shared_Files import PlayerAccount  # Assuming this is a generated IDL file
+from Server_Java.idls import GameIDL, PlayerCallBackIDL  # Assuming these are generated IDL files
+
+class GameLobbyModel:
+    def __init__(self, player):
+        self.player = player
+
+    def fetch_leaderboard(self):
+        # Placeholder: simulate leaderboard data
+        return [
+            "1. Nathan - 10 wins",
+            "2. Jacob - 8 wins",
+            "3. Liam - 7 wins",
+            "4. Mia - 5 wins",
+            "5. Ava - 4 wins"
+        ]
+
+
+class GameLobbyController:
+    def __init__(self, model, player, game_id, session_token):
+        self.model = model
+        self.player = player
+        self.game_id = game_id
+        self.session_token = session_token
+        self.initialize()
+
+    def initialize(self):
+        print("Game Lobby Initialized")
+        self.load_leaderboard()
+
+    def load_leaderboard(self):
+        leaderboard = self.model.fetch_leaderboard()
+        for entry in leaderboard:
+            print(entry)
+
+    def handle_enter_game(self):
+        print("[Client] Enter Game button pressed.")
+        # Logic to enter the game
+
+    def handle_quit(self):
+        print("[Client] Quit button pressed.")
+        sys.exit()
+
+    def handle_about(self):
+        print("Showing about dialog")
+        # Logic to show about dialog
+
+
+class GameRoomModel:
+    def __init__(self, game_service):
+        self.game_service = game_service
+
+    def start_round(self, game_token, round_number, player_id, session_token):
+        # Logic to start a round
+        pass
+
+    def get_random_word(self, game_token, round_number, player_id, session_token):
+        # Logic to get a random word
+        return "example"  # Placeholder
+
+    def guess_letter(self, game_token, player_id, session_token, letter):
+        # Logic to guess a letter
+        return []  # Placeholder for positions
+
+
+class GameRoomController:
+    def __init__(self, model, player_id, session_token, game_token):
+        self.model = model
+        self.player_id = player_id
+        self.session_token = session_token
+        self.game_token = game_token
+        self.round_number = 1
+        self.secret_word = self.model.get_random_word(game_token, self.round_number, player_id, session_token)
+        self.remaining_lives = 3  # Example value
+        print(f"Game Room Initialized for player {player_id}")
+
+    def handle_guess(self, letter):
+        print(f"[GameRoomController] handleGuess() for letter: {letter}")
+        hits = self.model.guess_letter(self.game_token, self.player_id, self.session_token, letter)
+        if not hits:
+            self.remaining_lives -= 1
+            print(f"[GameRoomController] Wrong guess. Remaining lives = {self.remaining_lives}")
+            if self.remaining_lives <= 0:
+                print("Game Over")
+        else:
+            print(f"Correct guess at positions: {hits}")
+
+
+class LogInPageModel:
+    def __init__(self, auth_service):
+        self.auth_service = auth_service
+
+    def login(self, username, password, callback):
+        # Logic to perform login
+        return True  # Placeholder
+
+
+class LogInController:
+    def __init__(self, model):
+        self.model = model
+
+    def handle_continue_button(self, username, password):
+        if not username or not password:
+            print("Username or password cannot be empty!")
+            return
+
+        success = self.model.login(username, password, None)  # Assuming callback is None for simplicity
+        if success:
+            print("Login Successful! Redirecting...")
+            # Redirect to game lobby
+        else:
+            print("Login Failed. Please try again!")
+
+
+# Example usage
+if __name__ == "__main__":
+    # Initialize CORBA
+    orb = CORBA.ORB_init(sys.argv)
+    # Assuming services are already set up and available
+    auth_service = None  # Replace with actual service reference
+    player_account = PlayerAccount(1, "username", "password", 0)  # Example player account
+
+    # Initialize models and controllers
+    login_model = LogInPageModel(auth_service)
+    login_controller = LogInController(login_model)
+
+    # Simulate login
+    login_controller.handle_continue_button("username", "password")
+
+    # Initialize game lobby
+    game_lobby_model = GameLobbyModel(player_account )
+    game_lobby_controller = GameLobbyController(game_lobby_model, player_account, 1, "session_token")
+
+    # Initialize game room
+    game_room_model = GameRoomModel(None)  # Replace with actual game service
+    game_room_controller = GameRoomController(game_room_model, player_account.player_id, "session_token", "game_token")
+
+    # Simulate game actions
+    game_room_controller.handle_guess('A')
+    game_room_controller.handle_guess('B')
+    game_room_controller.handle_guess('C')
