@@ -1,8 +1,15 @@
-module Game {
+#include "PlayerCallBack.idl"
 
+module GameIDL {
+    //
+    // Type definitions
+    //
     typedef sequence<string> StringList;
-    typedef sequence<long> IndexList;
+    typedef sequence<long>   IndexList;
 
+    //
+    // Exceptions
+    //
     exception AlreadyLoggedInException {};
     exception NotEnoughPlayersException {};
     exception NotLoggedInException {};
@@ -11,65 +18,63 @@ module Game {
     exception MaxAttemptsReachedException {};
     exception AlreadyGuessedLetterException {};
 
-    interface PlayerGameService {
-
-        // Get display name of a player
-        string getDisplayName(in string username, in string sessionToken)
+    //
+    // Main game interface
+    //
+    interface GameService {
+        // ─── Player Authentication & Info ───────────────────────────────
+        string getDisplayName(in long playerID, in string sessionToken)
             raises(NotLoggedInException);
 
-        // Get top players in leaderboard
         StringList getLeaderboards(in long playerID, in string sessionToken)
             raises(NotLoggedInException);
 
-        // Join game waiting lobby
-        string joinWaitingLobby(in long playerID, in string sessionToken)
+        // ─── Settings Retrieval ─────────────────────────────────────────
+        void getSetting(in string key, out string value, in string sessionToken)
             raises(NotLoggedInException);
 
-        // Register callback object for game events
-        void registerCallBack(in long playerID, in string gameToken, in string sessionToken)
+        // ─── Lobby Management ───────────────────────────────────────────
+        string joinLobby(in long playerID, in string sessionToken)
             raises(NotLoggedInException);
 
-        // Check lobby status (used for countdown/waiting info)
-        string getWaitingLobbyStatus(in string gameToken)
+        void leaveLobby(in long   playerID,in string gameToken,in string sessionToken)
+            raises(NotLoggedInException);
+
+        // ─── Waiting-room callback registration ─────────────────────────
+        void registerWaitingRoomCallback(in long   playerID,in string gameToken, in string sessionToken,in PlayerCallBackIDL::WaitingRoomGameCallbackService cb)
+            raises(NotLoggedInException);
+
+        string getLobbyStatus(in string sessionToken)
             raises(NotLoggedInException, GameTimeOutException, NotEnoughPlayersException);
 
-        // Get number of players in the lobby
         long getNumberOfPlayersJoined(in long playerID, in string sessionToken)
             raises(NotLoggedInException);
 
-        // Initiate game when enough players have joined
         long startGame(in long playerID, in string sessionToken)
             raises(NotEnoughPlayersException);
 
-        // Start a new game round
-        long startRound(in string gameToken, in long playerID, in string sessionToken)
+        // ─── Register the client's callback servant here ────────────────
+        void registerCallBack(in long playerID, in string gameToken, in string sessionToken, in PlayerCallBackIDL::GameCallBackService cb)
+            raises(NotLoggedInException);
+
+        // ─── Game and Round Management ──────────────────────────────────
+        long startRound(in string gameToken, in long roundNumber, in long playerID, in string sessionToken)
             raises(GameNotFoundException, NotLoggedInException);
 
-        // Get random word to guess (only at round start)
         string getRandomWord(in string gameToken, in long roundNumber, in long playerID, in string sessionToken)
             raises(GameNotFoundException, NotLoggedInException);
 
-        // Submit a letter guess
+        // ─── Letter Guessing ───────────────────────────────────────────
         IndexList guessLetter(in string gameToken, in long playerID, in string sessionToken, in char letter)
             raises(MaxAttemptsReachedException, GameNotFoundException, AlreadyGuessedLetterException, NotLoggedInException);
 
-        // Get remaining wait time before game starts
-        long getRemainingWaitingTime(in string gameToken, in long playerID, in string sessionToken)
-            raises(GameTimeOutException, NotLoggedInException);
-
-        // Get remaining time for the current round
-        long getRemainingRoundTime(in string gameToken, in long playerID, in string sessionToken)
-            raises(GameTimeOutException, NotLoggedInException);
-
-        // Get winner of the current round
+        // ─── Game and Round Results ───────────────────────────────────
         string getRoundWinner(in string gameToken, in long playerID, in string sessionToken)
             raises(NotLoggedInException);
 
-        // Get winner of the game
         string getGameWinner(in string gameToken, in long playerID, in string sessionToken)
             raises(NotLoggedInException);
 
-        // Get number of wins for a player in current game
         long getPlayerWins(in string gameToken, in long playerID, in string sessionToken)
             raises(NotLoggedInException);
     };
