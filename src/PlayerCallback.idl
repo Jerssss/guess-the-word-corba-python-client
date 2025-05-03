@@ -1,0 +1,47 @@
+module PlayerCallBackIDL {
+    // Thrown if the player isn’t logged in
+    exception NotLoggedInException {};
+
+    // Callback that the server uses to force‐logout a player
+    interface LoginCallbackService {
+        void notifyForcedLogout(in long playerID, in string sessionToken)
+            raises(PlayerCallBackIDL::NotLoggedInException);
+    };
+
+
+    interface WaitingRoomGameCallbackService {
+        // A new player has joined the lobby; totalPlayers is the current count
+        void notifyPlayerJoined(
+            in string gameToken,
+            in long   totalPlayers,
+            in string sessionToken
+        )
+        raises(PlayerCallBackIDL::NotLoggedInException);
+
+        // Time to start the synchronized countdown
+        void notifyCountdownStart(
+            in string gameToken,
+            in long   countdownSeconds,
+            in string sessionToken
+        )
+        raises(PlayerCallBackIDL::NotLoggedInException);
+
+        // Countdown aborted/reset because someone left
+        void notifyCountdownReset(
+            in string gameToken,
+            in string sessionToken
+        )
+        raises(PlayerCallBackIDL::NotLoggedInException);
+    };
+
+    // Callbacks for game events
+    interface GameCallBackService {
+        void notifyGameStart(in string gameToken, in string sessionToken);
+
+        void notifyRoundStart(in string gameToken, in long roundNumber, in string sessionToken);
+
+        void notifyRoundEnd(in string gameToken, in string sessionToken, in string result);
+
+        void notifyGameEnd(in string gameToken, in string sessionToken, in string result);
+    };
+};
