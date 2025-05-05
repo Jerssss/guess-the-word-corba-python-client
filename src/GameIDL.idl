@@ -1,15 +1,9 @@
-#include "PlayerCallBack.idl"
-
 module GameIDL {
-    //
-    // Type definitions
-    //
+ 
     typedef sequence<string> StringList;
     typedef sequence<long>   IndexList;
 
-    //
-    // Exceptions
-    //
+ 
     exception AlreadyLoggedInException {};
     exception NotEnoughPlayersException {};
     exception NotLoggedInException {};
@@ -18,29 +12,27 @@ module GameIDL {
     exception MaxAttemptsReachedException {};
     exception AlreadyGuessedLetterException {};
 
-    //
-    // Main game interface
-    //
+
     interface GameService {
-        // ─── Player Authentication & Info ───────────────────────────────
+        
         string getDisplayName(in long playerID, in string sessionToken)
             raises(NotLoggedInException);
 
         StringList getLeaderboards(in long playerID, in string sessionToken)
             raises(NotLoggedInException);
 
-        // ─── Settings Retrieval ─────────────────────────────────────────
+        
         void getSetting(in string key, out string value, in string sessionToken)
             raises(NotLoggedInException);
 
-        // ─── Lobby Management ───────────────────────────────────────────
+       
         string joinLobby(in long playerID, in string sessionToken)
             raises(NotLoggedInException);
 
         void leaveLobby(in long   playerID,in string gameToken,in string sessionToken)
             raises(NotLoggedInException);
 
-        // ─── Waiting-room callback registration ─────────────────────────
+       
         void registerWaitingRoomCallback(in long   playerID,in string gameToken, in string sessionToken,in PlayerCallBackIDL::WaitingRoomGameCallbackService cb)
             raises(NotLoggedInException);
 
@@ -53,22 +45,22 @@ module GameIDL {
         long startGame(in long playerID, in string sessionToken)
             raises(NotEnoughPlayersException);
 
-        // ─── Register the client's callback servant here ────────────────
+        
         void registerCallBack(in long playerID, in string gameToken, in string sessionToken, in PlayerCallBackIDL::GameCallBackService cb)
             raises(NotLoggedInException);
 
-        // ─── Game and Round Management ──────────────────────────────────
+        
         long startRound(in string gameToken, in long roundNumber, in long playerID, in string sessionToken)
             raises(GameNotFoundException, NotLoggedInException);
 
         string getRandomWord(in string gameToken, in long roundNumber, in long playerID, in string sessionToken)
             raises(GameNotFoundException, NotLoggedInException);
 
-        // ─── Letter Guessing ───────────────────────────────────────────
+        
         IndexList guessLetter(in string gameToken, in long playerID, in string sessionToken, in char letter)
             raises(MaxAttemptsReachedException, GameNotFoundException, AlreadyGuessedLetterException, NotLoggedInException);
 
-        // ─── Game and Round Results ───────────────────────────────────
+    
         string getRoundWinner(in string gameToken, in long playerID, in string sessionToken)
             raises(NotLoggedInException);
 
