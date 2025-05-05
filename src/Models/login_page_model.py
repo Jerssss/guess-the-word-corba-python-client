@@ -1,6 +1,7 @@
 # client/login_page_model.py
-
-from Shared_Files import PlayerAccount, LoginResult
+from Shared_Files.player_account import PlayerAccount
+from Shared_Files.login_result import LogInResults
+   
 
 class LogInPageModel:
     def __init__(self, auth_service):
@@ -10,7 +11,7 @@ class LogInPageModel:
         try:
             # Directly use auth_service for login (not calling PlayerClient_Python.get_authentication_service)
             session_token = self.auth_service.login(username, password, callback_stub)  # Call login method
-            player_account = PlayerAccount(1, username, password, 100)  # Dummy player account
-            return LoginResult(session_token, player_account)  # Return LoginResult object
+            player_account = player_account(1, username, password, 100)  # Dummy player account
+            return LogInResults(session_token, player_account)  # Return LoginResult object
         except Exception as ex:
             raise Exception(f"Login failed: {str(ex)}")

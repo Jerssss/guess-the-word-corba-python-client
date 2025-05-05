@@ -1,5 +1,5 @@
-from login_callback_service import LoginCallBackServiceImpl
-from session_manager import SessionManager
+from Services.login_callback_service import LoginCallBackServiceImpl
+from Services.session_manager import SessionManager
 from Idls import AuthenticationIDL  # Importing the required CORBA helpers
 
 class LogInController:
