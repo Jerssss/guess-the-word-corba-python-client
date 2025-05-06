@@ -1,79 +1,83 @@
 import sys
 from omniORB import CORBA
 import CosNaming
-from Idls import AuthenticationIDL_idl, PlayerCallBackIDL_idl  # Include both IDL modules
+import AuthenticationIDL
+print(dir(AuthenticationIDL))
+import PlayerCallBackIDL
 
 def main():
     orb = CORBA.ORB_init(
         sys.argv + ['-ORBInitRef', 'NameService=corbaloc::localhost:2000/NameService'],
         CORBA.ORB_ID
     )
-    print("ORB object:", orb)
-    print("Step 1 completed successfully")
+    print("Step 1: ORB initialized")
 
     try:
         obj = orb.resolve_initial_references("NameService")
-        print("Step 2: resolve_initial_references succeeded")
+        print("Step 2: NameService resolved")
     except Exception as e:
         print("FAILED at resolve_initial_references:", e)
         sys.exit(1)
 
     try:
         naming_context = obj._narrow(CosNaming.NamingContextExt)
-        print("Step 3: narrowed to NamingContextExt")
         if naming_context is None:
-            raise RuntimeError("narrow->NamingContextExt returned None")
+            raise RuntimeError("NamingContextExt narrowing returned None")
+        print("Step 3: NamingContextExt narrowed")
     except Exception as e:
         print("FAILED at NamingContextExt narrow:", e)
         sys.exit(1)
 
     try:
-        print("Listing all bindings in the Naming Service...")
+        print("Available bindings in Naming Service:")
         binding_list, _ = naming_context.list(100)
         for binding in binding_list:
             name = ".".join([n.id for n in binding.binding_name])
-            print(" - Found name:", name)
+            print(" -", name)
+            print("   Object Type:", binding.binding_type)
     except Exception as e:
         print("Could not list bindings:", e)
 
     try:
         auth_obj = naming_context.resolve_str("AuthenticationService")
-        print("Step 4: resolved authObj:", auth_obj)
+        print("Step 4: resolved AuthenticationService object:", auth_obj)
+    
+        # Narrow immediately using generated stub
+        authSvc = auth_obj._narrow(AuthenticationIDL.AuthenticationService)
+        print("Expected Repository ID:", AuthenticationIDL.AuthenticationService._NP_RepositoryId)
+        if authSvc is None:
+            raise RuntimeError("Narrowing failed - repository ID mismatch")
+        
+        print("Actual Repository ID:", authSvc._repository_id())
+
     except Exception as e:
         print("FAILED at resolve_str:", e)
         sys.exit(1)
 
-    try:
-        auth_obj = naming_context.resolve_str("AuthenticationService")
-        print("Step 4: resolved authObj:", auth_obj)
-        print("Type of resolved object:", type(auth_obj))  # Debugging line
-    except Exception as e:
-        print("FAILED at resolve_str:", e)
-    sys.exit(1)
-    authSvc = auth_obj._narrow(
-    AuthenticationIDL_idl._0_AuthenticationIDL._objref_AuthenticationService
-    )
-    if authSvc is None:
-        print("FAILED: object is not AuthenticationService")
-    sys.exit(1)
+    print("Step 5: Successfully narrowed to AuthenticationService")
+    # Check the repository_id of the narrowed object
+    print("Repository ID of the narrowed object:", authSvc._repository_id())
 
-    print("Successfully connected to AuthenticationService")
+    # Use CORBA.LongHolder for out long
+    player_id_holder = CORBA.LongHolder()
 
-    # === Step 4: Attempt login ===
-    player_id_holder = AuthenticationIDL_idl._0_AuthenticationIDL.IntHolder()
+    # Callback is optional; use None for now
+    callback_ref = None
 
     try:
         token = authSvc.login(
-            "seb",  # your test username
-            "yourpassword",  # your test password
+            "seb",              # test username
+            "yourpassword",     # test password
             player_id_holder,
             callback_ref
         )
         print(f"[CLIENT] Login successful: Token = {token}, Player ID = {player_id_holder.value}")
-    except AuthenticationIDL_idl._0_AuthenticationIDL.AlreadyLoggedInException:
+    except AuthenticationIDL.AlreadyLoggedInException:
         print("[CLIENT] Already logged in.")
-    except AuthenticationIDL_idl._0_AuthenticationIDL.AuthenticationException as e:
-        print(f"[CLIENT] Authentication failed: {e.reason}")
+    except AuthenticationIDL.AuthenticationException as e:
+        print(f"[CLIENT] Authentication failed: {e}")
+    except Exception as e:
+        print(f"[CLIENT] Unexpected exception: {e}")
 
 if __name__ == "__main__":
     main()

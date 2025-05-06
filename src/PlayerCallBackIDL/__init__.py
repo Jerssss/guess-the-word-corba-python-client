@@ -6,7 +6,7 @@ import omniORB
 omniORB.updateModule("PlayerCallBackIDL")
 
 # ** 1. Stub files contributing to this module
-import PlayerCallBackIDL_idl
+import PlayerCallBack_idl
 
 # ** 2. Sub-modules
 

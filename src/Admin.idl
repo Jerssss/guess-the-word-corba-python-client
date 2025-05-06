@@ -1,0 +1,36 @@
+// Admin.idl
+module AdminIDL {
+
+    exception NotLoggedInException {};
+    exception AccountExistsException {};
+    exception AccountNotFoundException {};
+    exception ExistingPasswordException {};
+    exception AccountCurrentlyActiveException {};
+    exception PlayerNotFoundException {};
+
+    interface AdminService {
+        // Create a new player account
+        void createPlayer(in string username, in string password, in string sessionToken, in long adminID)
+            raises(AccountExistsException, NotLoggedInException);
+
+        // Modify existing player's password
+        void modifyPlayer(in long playerID, in string newPassword, in string sessionToken, in long adminID)
+            raises(AccountNotFoundException, ExistingPasswordException, NotLoggedInException);
+
+        // Delete player account
+        void deletePlayer(in long playerID, in string sessionToken, in long adminID)
+            raises(AccountNotFoundException, AccountCurrentlyActiveException, NotLoggedInException);
+
+        // Search for a player by username
+        string searchPlayer(in string username, in string sessionToken, in long adminID)
+            raises(NotLoggedInException, PlayerNotFoundException);
+
+        // Change waiting time before game starts
+        void modifyWaitingTime(in long waitTime, in string sessionToken, in long adminID)
+            raises(NotLoggedInException);
+
+        // Change time duration for each round
+        void modifyRoundDuration(in long roundTime, in string sessionToken, in long adminID)
+            raises(NotLoggedInException);
+    };
+};
