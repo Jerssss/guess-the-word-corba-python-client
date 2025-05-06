@@ -48,7 +48,7 @@ def main():
         print("FAILED: object is not AuthenticationService")
         sys.exit(1)
 
-    print("✅ Successfully connected to AuthenticationService")
+    print("Successfully connected to AuthenticationService")
 
 if __name__ == "__main__":
     main()
