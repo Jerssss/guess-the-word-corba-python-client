@@ -1,70 +1,54 @@
-# File: client_python.py
-
 import sys
-import omniORB
 from omniORB import CORBA
-
-# Import the IDL files compiled by omniidl
-from Idls.GameIDL import GameIDL_idl
-from Idls.AuthenticationIDL import AuthenticationIDL_idl
-
-from Shared_Files.player_account import PlayerAccount
-from Controllers.game_lobby_controller import GameLobbyController
-from Controllers.game_room_controller import GameRoomController
-from Controllers.login_controller import LogInController
-from Models.login_page_model import LogInPageModel
-from Services.session_manager import SessionManager
-from Services.login_callback_service import LoginCallBackServiceImpl
-from Models.player_client_model import PlayerClient_Model
-
-# Ensure ORBInitRef is set
-if "-ORBInitRef" not in " ".join(sys.argv):
-    sys.argv += ["-ORBInitRef", "NameService=corbaloc:iiop:192.168.1.101:2000/NameService"]
+import CosNaming
+from Idls import AuthenticationIDL_idl
 
 def main():
-    # Initialize client-side ORB and services
-    player_client_model = PlayerClient_Model(sys.argv)
-    player_client_model.start_orb()
+    # 1) ORB init via a corbaloc name‐service URL
+    orb = CORBA.ORB_init(
+        sys.argv + [
+            '-ORBDefaultInitRef',
+            'NameService=corbaloc::localhost:2000/NameService'
+        ],
+        CORBA.ORB_ID
+    )
+    print("Step 1 completed successfully")
 
-    # Register callback service
-    login_callback_servant = LoginCallBackServiceImpl()
-    callback_stub = player_client_model.register_login_callback(login_callback_servant)
+    # 2) Get NameService
+    try:
+        objRef = orb.resolve_initial_references("NameService")
+        print("Step 2: got NameService:", objRef)
+    except Exception as e:
+        print("FAILED at resolve_initial_references:", e)
+        sys.exit(1)
 
-    # Set up login flow
-    auth_service = player_client_model.get_auth_service()
-    login_page_model = LogInPageModel(auth_service)
-    login_controller = LogInController(login_page_model, callback_stub)
+    # 3) Narrow to NamingContextExt
+    try:
+        ncExt = objRef._narrow(CosNaming.NamingContextExt)
+        print("Step 3: narrowed to NamingContextExt")
+        if ncExt is None:
+            raise RuntimeError("narrow->NamingContextExt returned None")
+    except Exception as e:
+        print("FAILED at NamingContextExt narrow:", e)
+        sys.exit(1)
 
-    username = input("Enter username: ")
-    password = input("Enter password: ")
-    login_controller.on_continue(username, password)
+    # 4) Resolve the AuthenticationService
+    try:
+        authObj = ncExt.resolve_str("AuthenticationService")
+        print("Step 4: resolved authObj:", authObj)
+    except Exception as e:
+        print("FAILED at resolve_str:", e)
+        sys.exit(1)
 
-    session_token = SessionManager.get_session_token()
-    print(f"Logged in with session token: {session_token}")
+    # 5) Narrow to the typed stub
+    authSvc = authObj._narrow(
+        AuthenticationIDL_idl._0_AuthenticationIDL._objref_AuthenticationService
+    )
+    if authSvc is None:
+        print("FAILED: object is not AuthenticationService")
+        sys.exit(1)
 
-    # Simulate a player
-    player_account = PlayerAccount(1, username, password, 100)
-    SessionManager.set_logged_in_player(player_account)
-
-    # Lobby and Game interaction
-    game_service = player_client_model.get_game_service()
-    game_lobby_controller = GameLobbyController(game_service)
-    game_room_controller = GameRoomController(game_service, SessionManager)
-
-    game_token = game_lobby_controller.join_lobby(player_account, session_token)
-    SessionManager.set_game_token(game_token)
-    print(f"Joined game lobby with game token: {game_token}")
-
-    round_number = 1
-    game_room_controller.start_round(round_number)
-    print(f"Started round {round_number} in the game.")
-
-    game_room_controller.guess_letter('A')
-    print("Player guessed the letter 'A'.")
-
-    winner = game_room_controller.get_round_winner()
-    print(f"The winner of the round is: {winner}")
-
+    print("✅ Successfully connected to AuthenticationService")
 
 if __name__ == "__main__":
     main()

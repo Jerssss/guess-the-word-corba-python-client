@@ -1,3 +1,4 @@
+#include "PlayerCallBackIDL.idl"
 module GameIDL {
  
     typedef sequence<string> StringList;
