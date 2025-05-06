@@ -60,20 +60,20 @@ def main():
     print("Successfully connected to AuthenticationService")
 
     # === Step 4: Attempt login ===
-    # Assuming you have a direct reference to the AuthenticationService
-authSvc = AuthenticationServiceHelper.narrow(auth_obj)
+    player_id_holder = AuthenticationIDL_idl._0_AuthenticationIDL.IntHolder()
 
-if authSvc is None:
-    print("Failed to narrow AuthenticationService")
-else:
-    print("Successfully narrowed AuthenticationService")
-    # Call a method to test
     try:
-        player_id_holder = AuthenticationIDL_idl._0_AuthenticationIDL.IntHolder()
-        token = authSvc.login("test_user", "test_password", player_id_holder, None)
-        print(f"Login successful: Token = {token}, Player ID = {player_id_holder.value}")
-    except Exception as e:
-        print(f"Login failed: {e}")
+        token = authSvc.login(
+            "seb",  # your test username
+            "yourpassword",  # your test password
+            player_id_holder,
+            callback_ref
+        )
+        print(f"[CLIENT] Login successful: Token = {token}, Player ID = {player_id_holder.value}")
+    except AuthenticationIDL_idl._0_AuthenticationIDL.AlreadyLoggedInException:
+        print("[CLIENT] Already logged in.")
+    except AuthenticationIDL_idl._0_AuthenticationIDL.AuthenticationException as e:
+        print(f"[CLIENT] Authentication failed: {e.reason}")
 
 if __name__ == "__main__":
     main()
