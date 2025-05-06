@@ -5,7 +5,7 @@ from Idls import AuthenticationIDL_idl, PlayerCallBackIDL_idl  # Include both ID
 
 def main():
     orb = CORBA.ORB_init(
-        sys.argv + ['-ORBInitRef', 'NameService=corbaloc::localhost:1050/NameService'],
+        sys.argv + ['-ORBInitRef', 'NameService=corbaloc::localhost:2000/NameService'],
         CORBA.ORB_ID
     )
     print("ORB object:", orb)
