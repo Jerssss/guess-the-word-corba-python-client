@@ -3,6 +3,7 @@ from omniORB import CORBA
 import CosNaming
 import AuthenticationIDL
 from datetime import datetime
+from about import About
 
 def current_time():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -17,11 +18,9 @@ def display_menu():
 def start_game():
     print(f"[CLIENT | {current_time()}] Starting a new game...")
 
-def view_leaderboard():
-    print(f"[CLIENT | {current_time()}] Displaying leaderboard...")
-
 def about():
-    print(f"[CLIENT | {current_time()}] This is the game client, built using CORBA.")
+    about_info = About()  # instance of the About class
+    about_info.display()
 
 def main():
     # Ask user for the IP address to connect to
@@ -96,7 +95,7 @@ def main():
                     return
                 else:
                     print(f"[CLIENT | {current_time()}] Invalid choice. Please try again.")
-                    
+
         except AuthenticationIDL.AlreadyLoggedInException:
             print(f"[CLIENT | {current_time()} | {username}] Already logged in.")
             return
