@@ -33,11 +33,12 @@ _0_AuthenticationIDL.AuthenticationException = omniORB.newEmptyClass()
 class AuthenticationException (CORBA.UserException):
     _NP_RepositoryId = "IDL:AuthenticationIDL/AuthenticationException:1.0"
 
-    def __init__(self):
-        CORBA.UserException.__init__(self)
+    def __init__(self, message):
+        CORBA.UserException.__init__(self, message)
+        self.message = message
 
 _0_AuthenticationIDL.AuthenticationException = AuthenticationException
-_0_AuthenticationIDL._d_AuthenticationException  = (omniORB.tcInternal.tv_except, AuthenticationException, AuthenticationException._NP_RepositoryId, "AuthenticationException")
+_0_AuthenticationIDL._d_AuthenticationException  = (omniORB.tcInternal.tv_except, AuthenticationException, AuthenticationException._NP_RepositoryId, "AuthenticationException", "message", (omniORB.tcInternal.tv_string,0))
 _0_AuthenticationIDL._tc_AuthenticationException = omniORB.tcInternal.createTypeCode(_0_AuthenticationIDL._d_AuthenticationException)
 omniORB.registerType(AuthenticationException._NP_RepositoryId, _0_AuthenticationIDL._d_AuthenticationException, _0_AuthenticationIDL._tc_AuthenticationException)
 del AuthenticationException
