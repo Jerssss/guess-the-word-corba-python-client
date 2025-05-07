@@ -7,6 +7,22 @@ from datetime import datetime
 def current_time():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+def display_menu():
+    print("\n=== Main Menu ===")
+    print("1. Start Game")
+    print("2. View Leaderboard")
+    print("3. About")
+    print("4. Quit")
+
+def start_game():
+    print(f"[CLIENT | {current_time()}] Starting a new game...")
+
+def view_leaderboard():
+    print(f"[CLIENT | {current_time()}] Displaying leaderboard...")
+
+def about():
+    print(f"[CLIENT | {current_time()}] This is the game client, built using CORBA.")
+
 def main():
     # Ask user for the IP address to connect to
     print(f"[CLIENT | {current_time()}] Enter server IP address (or press Enter for default 'localhost'): ", end='')
@@ -54,7 +70,7 @@ def main():
         username = input().strip()
         if username.lower() == 'exit':
             print("Exiting login client.")
-            break
+            return
 
         print(f"[CLIENT | {current_time()}] Enter password: ", end='')
         password = input().strip()
@@ -63,10 +79,27 @@ def main():
             token = authSvc.login(username, password, callback_ref)
             print(f"[CLIENT | {current_time()} | {username}] Login successful!")
             print(f"Token: {token}")
-            break
+
+            # Post-login menu
+            while True:
+                display_menu()
+                choice = input(f"[CLIENT | {current_time()} | {username}] Select an option to choose: ").strip()
+
+                if choice == "1":
+                    start_game()
+                elif choice == "2":
+                    view_leaderboard()
+                elif choice == "3":
+                    about()
+                elif choice == "4":
+                    print(f"[CLIENT | {current_time()}] Quitting...")
+                    return
+                else:
+                    print(f"[CLIENT | {current_time()}] Invalid choice. Please try again.")
+                    
         except AuthenticationIDL.AlreadyLoggedInException:
             print(f"[CLIENT | {current_time()} | {username}] Already logged in.")
-            break
+            return
         except AuthenticationIDL.AuthenticationException:
             print(f"[CLIENT | {current_time()}] Invalid username or password.")
         except Exception as e:
