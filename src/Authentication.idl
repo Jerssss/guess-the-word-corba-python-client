@@ -1,7 +1,7 @@
 #include "PlayerCallBack.idl"
 
 module AuthenticationIDL {
-    exception AuthenticationException {};
+    exception AuthenticationException {string message;};
     exception AlreadyLoggedInException {};
     exception NotLoggedInException {};
 
