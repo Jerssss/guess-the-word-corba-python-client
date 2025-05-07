@@ -8,8 +8,15 @@ def current_time():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def main():
+    # Ask user for the IP address to connect to
+    print(f"[CLIENT | {current_time()}] Enter server IP address (or press Enter for default 'localhost'): ", end='')
+    server_ip = input().strip()
+    if not server_ip:
+        server_ip = "localhost"
+
+    # Initialize the ORB with the provided IP
     orb = CORBA.ORB_init(
-        sys.argv + ['-ORBInitRef', 'NameService=corbaloc::192.168.12.201:1050/NameService'], # Change the ip here to match the ip of the server
+        sys.argv + [f'-ORBInitRef', f'NameService=corbaloc::{server_ip}:1050/NameService'],
         CORBA.ORB_ID
     )
     print("Step 1: ORB initialized")
@@ -40,7 +47,7 @@ def main():
         print("FAILED at resolve_str or narrowing:", e)
         sys.exit(1)
 
-    callback_ref = None  # TODO: callback implementation yet
+    callback_ref = None
     while True:
         print("\n--- LOGIN ---")
         print(f"[CLIENT | {current_time()}] Enter username (or type 'exit' to quit): ", end='')
@@ -56,7 +63,7 @@ def main():
             token = authSvc.login(username, password, callback_ref)
             print(f"[CLIENT | {current_time()} | {username}] Login successful!")
             print(f"Token: {token}")
-            break  # Exit loop on successful login
+            break
         except AuthenticationIDL.AlreadyLoggedInException:
             print(f"[CLIENT | {current_time()} | {username}] Already logged in.")
             break
