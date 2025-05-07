@@ -9,7 +9,7 @@ def current_time():
 
 def main():
     orb = CORBA.ORB_init(
-        sys.argv + ['-ORBInitRef', 'NameService=corbaloc::192.168.12.201:1050/NameService'],
+        sys.argv + ['-ORBInitRef', 'NameService=corbaloc::192.168.12.201:1050/NameService'], # Change the ip here to match the ip of the server
         CORBA.ORB_ID
     )
     print("Step 1: ORB initialized")
