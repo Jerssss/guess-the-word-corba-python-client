@@ -161,7 +161,7 @@ omniORB.registerType(GameCallBackService._NP_RepositoryId, _0_PlayerCallBackIDL.
 # GameCallBackService operations and attributes
 GameCallBackService._d_notifyGameStart = (((omniORB.tcInternal.tv_string,0), (omniORB.tcInternal.tv_string,0)), (), None)
 GameCallBackService._d_notifyRoundStart = (((omniORB.tcInternal.tv_string,0), omniORB.tcInternal.tv_long, (omniORB.tcInternal.tv_string,0)), (), None)
-GameCallBackService._d_notifyRoundEnd = (((omniORB.tcInternal.tv_string,0), (omniORB.tcInternal.tv_string,0), (omniORB.tcInternal.tv_string,0)), (), None)
+GameCallBackService._d_notifyRoundEnd = (((omniORB.tcInternal.tv_string,0), (omniORB.tcInternal.tv_string,0), (omniORB.tcInternal.tv_string,0), (omniORB.tcInternal.tv_string,0)), (), None)
 GameCallBackService._d_notifyGameEnd = (((omniORB.tcInternal.tv_string,0), (omniORB.tcInternal.tv_string,0), (omniORB.tcInternal.tv_string,0)), (), None)
 
 # GameCallBackService object reference
