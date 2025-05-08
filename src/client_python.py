@@ -13,6 +13,17 @@ from about import About
 # Lock for synchronizing console output
 console_lock = threading.Lock()
 
+# Flag to signal forced logout for menu refresh
+forced_logout_flag = threading.Event()
+
+# PlayerAccount class to mimic Java's Shared_Files.PlayerAccount
+class PlayerAccount:
+    def __init__(self, player_id, username):
+        self.player_id = player_id
+        self.username = username
+        self.password = ""  # Placeholder, not stored
+        self.game_wins = 0  # Matches Java's gameWins
+
 # SessionManager class integrated
 class SessionManager:
     _session_token = None
@@ -85,6 +96,21 @@ def register_game_callback(poa, callback_servant):
 
 def register_waiting_room_callback(poa, callback_servant):
     return poa.servant_to_reference(callback_servant)
+
+# Login Callback Servant
+class LoginCallbackServant(PlayerCallBackIDL__POA.LoginCallbackService):
+    def notifyLoginSuccess(self, sessionToken, playerId):
+        with console_lock:
+            print(f"[Callback] Login successful for player {playerId} with token {sessionToken}")
+
+    def notifyLoginFailure(self, reason):
+        with console_lock:
+            print(f"[Callback] Login failed: {reason}")
+
+    def notifyForcedLogout(self, playerId, sessionToken):
+        with console_lock:
+            print(f"[Callback] Forced logout for player {playerId}, invalidating token: {sessionToken}")
+        forced_logout_flag.set()  # Signal menu loop to refresh
 
 # Game Controller to manage game state and logic
 class GameController:
@@ -213,7 +239,7 @@ class GameCallbackServant(PlayerCallBackIDL__POA.GameCallBackService):
 
 # Main client logic
 def current_time():
-    return datetime.now().strftime("%Y-%m-d %H:%M:%S")
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def display_menu():
     with console_lock:
@@ -343,8 +369,6 @@ def main():
     SessionManager.set_game_service(game_service)
     print("Step 4: GameService resolved")
 
-    callback_ref = None  # Placeholder for login callback if needed
-
     while True:
         with console_lock:
             print("\n--- LOGIN ---")
@@ -359,17 +383,45 @@ def main():
             print(f"[CLIENT | {current_time()}] Enter password: ", end='')
         password = input().strip()
 
+        # Validate input
+        if not username or not password:
+            with console_lock:
+                print(f"[CLIENT | {current_time()}] Username or password cannot be empty!")
+            continue
+
         try:
+            # Create and register login callback
+            callback_servant = LoginCallbackServant()
+            poa = SessionManager.get_poa()
+            callback_ref = register_login_callback(poa, callback_servant)
+
+            # Perform login
             token = auth_service.login(username, password, callback_ref)
-            SessionManager.set_session_token(token)
+            player_id = token[1]  # Extract player ID from tuple
+            session_token = token[0]  # Extract session token
+            player_account = PlayerAccount(player_id, username)
+            SessionManager.set_session_token((session_token, player_id))  # Keep tuple for game logic
+            SessionManager.set_logged_in_player(player_account)
+
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Login successful!")
                 print(f"Token: {token}")
 
             while True:
                 display_menu()
-                choice = input(f"[CLIENT | {current_time()} | {username}] Select an option: ").strip()
-
+                while True:
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Select an option: ", end='', flush=True)
+                    choice = input().strip()
+                    if forced_logout_flag.is_set():
+                        forced_logout_flag.clear()
+                        with console_lock:
+                            print()  # Ensure newline after callback
+                        break  # Redisplay menu
+                    if choice:
+                        break  # Valid input received
+                if not choice:
+                    continue  # Redisplay menu if input was interrupted
                 if choice == "1":
                     start_game(game_service, username, token)
                 elif choice == "2":
@@ -393,7 +445,7 @@ def main():
                 print(f"[CLIENT | {current_time()} | {username}] Invalid username or password.")
         except Exception as e:
             with console_lock:
-                print(f"[CLIENT | {current_time()}] Unexpected error: {e}")
+                print(f"[CLIENT | {current_time()} | {username}] Login failed: {e}")
 
 if __name__ == "__main__":
     main()
