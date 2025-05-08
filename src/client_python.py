@@ -96,26 +96,37 @@ def display_menu():
     print("4. Quit")
 
 def start_game(game_service, username, token):
+    session_token, player_id = token
     print(f"[CLIENT | {current_time()} | {username}] Starting a new game...")
+    print(f"[CLIENT | {current_time()} | {username}] Joining the lobby...")
+
     try:
-        lobby_id = None
-        print(f"[CLIENT | {current_time()} | {username}] Sending request to start game with token {token[1]} and lobby_id {lobby_id}")
-        game_service.startGame(token[1], lobby_id)
-        print(f"[CLIENT | {current_time()} | {username}] Game started successfully!")
-        while True:
-            try:
-                player_count = game_service.getNumberOfPlayersJoined(lobby_id)
-                print(f"[CLIENT | {current_time()} | {username}] Waiting for players... (Players: {player_count}/2)", end="\r")
-                if player_count >= 2:
-                    print(f"\n[CLIENT | {current_time()} | {username}] Minimum players reached. Starting countdown...")
-                    for seconds in range(5, 0, -1):
-                        print(f"[CLIENT | {current_time()} | {username}] Game starting in {seconds} seconds...", end="\r")
-                        time.sleep(1)
-                    print(f"[CLIENT | {current_time()} | {username}] Game starting now!")
-                    break
-            except GameIDL.NotEnoughPlayersException:
-                print(f"[CLIENT | {current_time()} | {username}] Not enough players yet. Waiting...")
+        # Join the lobby
+        lobby_id = game_service.joinLobby(player_id, session_token)
+        print(f"[CLIENT | {current_time()} | {username}] Joined lobby: {lobby_id}")
+
+        # Wait for up to 10 seconds for another player to join
+        start_time = time.time()
+        for remaining in range(10, -1, -1):
+            player_count = game_service.getNumberOfPlayersJoined(player_id, session_token)
+            print(f"[CLIENT | {current_time()} | {username}] Waiting for players... {remaining} seconds left, current players: {player_count}", end="\r")
+            if player_count >= 2:
+                print(f"\n[CLIENT | {current_time()} | {username}] Enough players joined! Starting game...")
+                break
             time.sleep(1)
+        else:
+            print(f"\n[CLIENT | {current_time()} | {username}] No other players joined within 10 seconds. Returning to home screen.")
+            return
+
+        # Start the game if minimum players are present
+        game_id = game_service.startGame(player_id, session_token)
+        print(f"[CLIENT | {current_time()} | {username}] Game started successfully with game_id: {game_id}")
+
+        # Placeholder for game logic (rounds, guessing, etc.)
+        # Add your round mechanics here as per game description
+
+    except GameIDL.NotEnoughPlayersException:
+        print(f"[CLIENT | {current_time()} | {username}] Not enough players to start the game after waiting.")
     except Exception as e:
         print(f"[CLIENT | {current_time()} | {username}] Error during game start: {e}")
 
@@ -193,7 +204,7 @@ def main():
                 elif choice == "3":
                     about()
                 elif choice == "4":
-                    print(f"[CLIENT | {current_time()} | {username}] Quitting...")
+                    print(f"[CLIENT | {current_time()} | {username}] Logging Out...")
                     break
                 else:
                     print(f"[CLIENT | {current_time()} | {username}] Invalid choice. Please try again.")
