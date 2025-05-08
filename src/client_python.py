@@ -1,12 +1,17 @@
 import sys
+import threading
 from omniORB import CORBA
 import CosNaming
 import AuthenticationIDL
 import GameIDL
 import PlayerCallBackIDL
+import PlayerCallBackIDL__POA
 from datetime import datetime
 import time
 from about import About
+
+# Lock for synchronizing console output
+console_lock = threading.Lock()
 
 # SessionManager class integrated
 class SessionManager:
@@ -71,64 +76,223 @@ class SessionManager:
     def get_auth_service():
         return SessionManager._auth_service
 
-# Callback registration functions from PlayerClient_Model
+# Callback registration functions
 def register_login_callback(poa, callback_servant):
-    ref = poa.servant_to_reference(callback_servant)
-    return PlayerCallBackIDL.LoginCallbackServiceHelper.narrow(ref)
+    return poa.servant_to_reference(callback_servant)
 
 def register_game_callback(poa, callback_servant):
-    ref = poa.servant_to_reference(callback_servant)
-    return PlayerCallBackIDL.GameCallBackServiceHelper.narrow(ref)
+    return poa.servant_to_reference(callback_servant)
 
 def register_waiting_room_callback(poa, callback_servant):
-    ref = poa.servant_to_reference(callback_servant)
-    return PlayerCallBackIDL.WaitingRoomGameCallbackServiceHelper.narrow(ref)
+    return poa.servant_to_reference(callback_servant)
+
+# Game Controller to manage game state and logic
+class GameController:
+    def __init__(self, game_service, player_id, session_token, game_token):
+        self.game_service = game_service
+        self.player_id = player_id
+        self.session_token = session_token
+        self.game_token = game_token
+        self.total_rounds = self.get_setting("total_rounds")
+        self.current_round = 0
+        self.secret_word = ""
+        self.revealed_word = []
+        self.lives = 0
+        self.round_started = threading.Event()
+        self.round_ended = threading.Event()
+        self.game_ended = threading.Event()
+        self.winner_name = ""
+        self.champion = ""
+
+    def get_setting(self, key):
+        try:
+            return int(self.game_service.getSetting(key, self.session_token))
+        except Exception as e:
+            with console_lock:
+                print(f"Error getting setting {key}: {e}")
+            return 0
+
+    def handle_round_start(self, round_number):
+        if self.current_round == round_number:
+            return  # Ignore duplicate round start callbacks
+        self.current_round = round_number
+        try:
+            self.secret_word = self.game_service.getRandomWord(self.game_token, round_number, self.player_id, self.session_token)
+            self.revealed_word = ['_'] * len(self.secret_word)
+            self.lives = self.get_setting("number_of_lives")
+            self.round_ended.clear()
+            with console_lock:
+                print(f"\nRound {round_number} started!")
+                print(f"Word to guess: {' '.join(self.revealed_word)}")
+                print(f"Lives: {self.lives}")
+            self.round_started.set()
+        except Exception as e:
+            with console_lock:
+                print(f"Error starting round {round_number}: {e}")
+            self.round_ended.set()
+
+    def play_round(self, username):
+        while not self.round_ended.is_set():
+            with console_lock:
+                print(f"\n[CLIENT | {current_time()} | {username}] Word: {' '.join(self.revealed_word)}")
+                print(f"[CLIENT | {current_time()} | {username}] Lives: {self.lives}")
+                print(f"[CLIENT | {current_time()} | {username}] Enter a letter (or 'quit' to leave): ", end='', flush=True)
+            guess = input().strip().upper()
+            if guess == 'QUIT':
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Quitting the round...")
+                break
+            if len(guess) != 1 or not guess.isalpha():
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Invalid input. Please enter a single letter.")
+                continue
+            try:
+                positions = self.game_service.guessLetter(self.game_token, self.player_id, self.session_token, guess)
+                if positions:
+                    for pos in positions:
+                        self.revealed_word[pos] = guess
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Correct! Word: {' '.join(self.revealed_word)}")
+                        if '_' not in self.revealed_word:
+                            print(f"[CLIENT | {current_time()} | {username}] You guessed the word!")
+                            break
+                else:
+                    self.lives -= 1
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Incorrect. Lives left: {self.lives}")
+                        if self.lives <= 0:
+                            print(f"[CLIENT | {current_time()} | {username}] Out of lives!")
+                            break
+            except GameIDL.MaxAttemptsReachedException:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Maximum attempts reached. Round over.")
+                break
+            except Exception as e:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Error during guess: {e}")
+                break
+
+    def handle_round_end(self, winner_name, secret_word):
+        self.winner_name = winner_name if winner_name else "Nobody"
+        self.secret_word = secret_word
+        self.round_ended.set()
+        with console_lock:
+            print(f"\nRound {self.current_round} ended. Winner: {self.winner_name}, Secret word: {secret_word}")
+            if self.current_round < self.total_rounds:
+                print("Waiting for the next round...")
+
+    def handle_game_end(self, winner_name):
+        self.champion = winner_name if winner_name else "Nobody"
+        self.game_ended.set()
+        with console_lock:
+            print(f"\nGame ended. Overall winner: {self.champion}")
+
+# Game Callback Servant
+class GameCallbackServant(PlayerCallBackIDL__POA.GameCallBackService):
+    def __init__(self, controller):
+        self.controller = controller
+
+    def notifyGameStart(self, gameToken, sessionToken):
+        with console_lock:
+            print(f"\n[Callback] Game started with token {gameToken}")
+
+    def notifyRoundStart(self, gameToken, roundNumber, sessionToken):
+        with console_lock:
+            print(f"\n[Callback] Round {roundNumber} started")
+        self.controller.handle_round_start(roundNumber)
+
+    def notifyRoundEnd(self, gameToken, sessionToken, winnerName, secretWord):
+        with console_lock:
+            print(f"\n[Callback] Round ended. Winner: {winnerName}, Word: {secretWord}")
+        self.controller.handle_round_end(winnerName, secretWord)
+
+    def notifyGameEnd(self, gameToken, sessionToken, winnerName):
+        with console_lock:
+            print(f"\n[Callback] Game ended. Winner: {winnerName}")
+        self.controller.handle_game_end(winnerName)
 
 # Main client logic
 def current_time():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().strftime("%Y-%m-d %H:%M:%S")
 
 def display_menu():
-    print("\n=== Main Menu ===")
-    print("1. Start Game")
-    print("2. View Leaderboard")
-    print("3. About")
-    print("4. Quit")
+    with console_lock:
+        print("\n=== Game Lobby ===")
+        print("1. Start Game")
+        print("2. View Leaderboard")
+        print("3. About")
+        print("4. Quit")
 
 def start_game(game_service, username, token):
     session_token, player_id = token
-    print(f"[CLIENT | {current_time()} | {username}] Starting a new game...")
-    print(f"[CLIENT | {current_time()} | {username}] Joining the lobby...")
+    with console_lock:
+        print(f"[CLIENT | {current_time()} | {username}] Starting a new game...")
+        print(f"[CLIENT | {current_time()} | {username}] Joining the waiting room...")
 
     try:
         # Join the lobby
-        lobby_id = game_service.joinLobby(player_id, session_token)
-        print(f"[CLIENT | {current_time()} | {username}] Joined lobby: {lobby_id}")
+        game_token = game_service.joinLobby(player_id, session_token)
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Joined waiting room: {game_token}")
 
-        # Wait for up to 10 seconds for another player to join
-        start_time = time.time()
+        # Wait for exactly 10 seconds, printing countdown on new lines
+        player_count = 0
         for remaining in range(10, -1, -1):
             player_count = game_service.getNumberOfPlayersJoined(player_id, session_token)
-            print(f"[CLIENT | {current_time()} | {username}] Waiting for players... {remaining} seconds left, current players: {player_count}", end="\r")
-            if player_count >= 2:
-                print(f"\n[CLIENT | {current_time()} | {username}] Enough players joined! Starting game...")
-                break
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Waiting for players... {remaining} seconds left, current players: {player_count}")
             time.sleep(1)
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Countdown finished. Current players: {player_count}")
+            if player_count < 2:
+                print(f"[CLIENT | {current_time()} | {username}] Not enough players joined within 10 seconds. Returning to home screen.")
+                return
+            print(f"[CLIENT | {current_time()} | {username}] Enough players joined! Starting game...")
+
+        # Initialize game controller
+        controller = GameController(game_service, player_id, session_token, game_token)
+
+        # Register game callback
+        callback_servant = GameCallbackServant(controller)
+        poa = SessionManager.get_poa()
+        callback_ref = register_game_callback(poa, callback_servant)
+        game_service.registerCallBack(player_id, game_token, session_token, callback_ref)
+
+        # Start round 1
+        game_service.startRound(game_token, 1, player_id, session_token)
+
+        # Game loop with timeout
+        while controller.current_round <= controller.total_rounds:
+            if controller.game_ended.is_set():
+                break  # Exit loop if game has ended
+            if not controller.round_started.wait(timeout=30):  # Wait up to 30 seconds
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to start. Exiting game.")
+                break
+            controller.round_started.clear()
+            controller.play_round(username)
+            if not controller.round_ended.wait(timeout=30):  # Wait up to 30 seconds
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to end. Exiting game.")
+                break
+            controller.round_ended.clear()
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Round {controller.current_round} ended. Winner: {controller.winner_name}, Word: {controller.secret_word}")
+
+        # Wait for game end
+        if not controller.game_ended.is_set() and not controller.game_ended.wait(timeout=30):  # Wait up to 30 seconds
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for game to end. Exiting.")
         else:
-            print(f"\n[CLIENT | {current_time()} | {username}] No other players joined within 10 seconds. Returning to home screen.")
-            return
-
-        # Start the game if minimum players are present
-        game_id = game_service.startGame(player_id, session_token)
-        print(f"[CLIENT | {current_time()} | {username}] Game started successfully with game_id: {game_id}")
-
-        # Placeholder for game logic (rounds, guessing, etc.)
-        # Add your round mechanics here as per game description
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Game ended. Overall winner: {controller.champion}")
 
     except GameIDL.NotEnoughPlayersException:
-        print(f"[CLIENT | {current_time()} | {username}] Not enough players to start the game after waiting.")
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Not enough players to start the game after waiting.")
     except Exception as e:
-        print(f"[CLIENT | {current_time()} | {username}] Error during game start: {e}")
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Error during game: {e}")
 
 def about():
     about_info = About()
@@ -147,6 +311,11 @@ def main():
     root_poa = orb.resolve_initial_references("RootPOA")
     root_poa._get_the_POAManager().activate()
     SessionManager.init_orb(orb, root_poa)
+
+    # Start ORB event loop in a separate thread
+    orb_thread = threading.Thread(target=orb.run)
+    orb_thread.daemon = True
+    orb_thread.start()
 
     # Resolve NameService
     obj = orb.resolve_initial_references("NameService")
@@ -174,24 +343,28 @@ def main():
     SessionManager.set_game_service(game_service)
     print("Step 4: GameService resolved")
 
-    callback_ref = None  # Placeholder for callback implementation if needed
+    callback_ref = None  # Placeholder for login callback if needed
 
     while True:
-        print("\n--- LOGIN ---")
-        print(f"[CLIENT | {current_time()}] Enter username (or type 'exit' to quit): ", end='')
+        with console_lock:
+            print("\n--- LOGIN ---")
+            print(f"[CLIENT | {current_time()}] Enter username (or type 'exit' to quit): ", end='')
         username = input().strip()
         if username.lower() == 'exit':
-            print("Exiting login client.")
+            with console_lock:
+                print("Exiting login client.")
             break
 
-        print(f"[CLIENT | {current_time()}] Enter password: ", end='')
+        with console_lock:
+            print(f"[CLIENT | {current_time()}] Enter password: ", end='')
         password = input().strip()
 
         try:
             token = auth_service.login(username, password, callback_ref)
             SessionManager.set_session_token(token)
-            print(f"[CLIENT | {current_time()} | {username}] Login successful!")
-            print(f"Token: {token}")
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Login successful!")
+                print(f"Token: {token}")
 
             while True:
                 display_menu()
@@ -200,24 +373,27 @@ def main():
                 if choice == "1":
                     start_game(game_service, username, token)
                 elif choice == "2":
-                    print("Leaderboard feature not implemented yet.")
+                    with console_lock:
+                        print("Leaderboard feature not implemented yet.")
                 elif choice == "3":
                     about()
                 elif choice == "4":
-                    print(f"[CLIENT | {current_time()} | {username}] Logging Out...")
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Logging Out...")
                     break
                 else:
-                    print(f"[CLIENT | {current_time()} | {username}] Invalid choice. Please try again.")
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Invalid choice. Please try again.")
 
         except AuthenticationIDL.AlreadyLoggedInException:
-            print(f"[CLIENT | {current_time()} | {username}] Already logged in.")
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Already logged in.")
         except AuthenticationIDL.AuthenticationException:
-            print(f"[CLIENT | {current_time()}] Invalid username or password.")
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Invalid username or password.")
         except Exception as e:
-            print(f"[CLIENT | {current_time()}] Unexpected error: {e}")
-
-    # Optional: Start ORB event loop if callbacks are implemented
-    # orb.run()
+            with console_lock:
+                print(f"[CLIENT | {current_time()}] Unexpected error: {e}")
 
 if __name__ == "__main__":
     main()
