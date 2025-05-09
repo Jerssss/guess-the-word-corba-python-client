@@ -20,10 +20,10 @@ forced_logout_flag = threading.Event()
 
 # PlayerAccount class to mimic Java's Shared_Files.PlayerAccount
 class PlayerAccount:
-    def __init__(self, player_id, username):
+    def __init__(self, player_id, username, password):
         self.player_id = player_id
         self.username = username
-        self.password = ""  # Placeholder, not stored
+        self.password = password  # Store password for re-authentication
         self.game_wins = 0  # Matches Java's gameWins
 
 # SessionManager class integrated
@@ -35,6 +35,7 @@ class SessionManager:
     _root_poa = None
     _game_service = None
     _auth_service = None
+    _server_ip = None
 
     @staticmethod
     def init_orb(orb_ref, poa_ref):
@@ -88,6 +89,14 @@ class SessionManager:
     @staticmethod
     def get_auth_service():
         return SessionManager._auth_service
+
+    @staticmethod
+    def set_server_ip(server_ip):
+        SessionManager._server_ip = server_ip
+
+    @staticmethod
+    def get_server_ip():
+        return SessionManager._server_ip
 
 # Callback registration functions
 def register_login_callback(poa, callback_servant):
@@ -306,6 +315,92 @@ def display_menu():
         print("4. Quit")
         print("(Type 'exit' to exit the client)")
 
+def reconnect_to_server(server_ip, username, password, poa, current_token):
+    """Attempt to reconnect to the server and verify with the existing session."""
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Server connection lost. Attempting to reconnect (Attempt {attempt}/{max_attempts})...")
+        try:
+            # Re-initialize ORB
+            orb_args = sys.argv + ['-ORBInitRef', f'NameService=corbaloc::{server_ip}:1050/NameService']
+            orb = CORBA.ORB_init(orb_args, CORBA.ORB_ID)
+            root_poa = orb.resolve_initial_references("RootPOA")
+            root_poa._get_the_POAManager().activate()
+            SessionManager.init_orb(orb, root_poa)
+
+            # Start ORB thread
+            orb_thread = threading.Thread(target=orb.run)
+            orb_thread.daemon = True
+            orb_thread.start()
+
+            # Resolve NameService
+            obj = orb.resolve_initial_references("NameService")
+            naming_context = obj._narrow(CosNaming.NamingContextExt)
+            if naming_context is None:
+                raise Exception("NamingContextExt narrowing returned None")
+
+            # Resolve AuthenticationService
+            auth_obj = naming_context.resolve_str("AuthenticationService")
+            auth_service = auth_obj._narrow(AuthenticationIDL.AuthenticationService)
+            if auth_service is None:
+                raise Exception("AuthenticationService narrowing returned None")
+
+            # Resolve GameService
+            game_obj = naming_context.resolve_str("GameService")
+            game_service = game_obj._narrow(GameIDL.GameService)
+            if game_service is None:
+                raise Exception("GameService narrowing returned None")
+
+            # Test existing session validity
+            if current_token:
+                session_token, player_id = current_token
+                try:
+                    # Use a lightweight GameService call to verify session
+                    game_service.getSetting("total_rounds", session_token)
+                    # Update SessionManager
+                    SessionManager.set_auth_service(auth_service)
+                    SessionManager.set_game_service(game_service)
+                    SessionManager.set_server_ip(server_ip)
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Reconnected successfully with existing session.")
+                    return current_token
+                except Exception:
+                    # Session invalid, proceed to re-authenticate
+                    pass
+
+            # Re-authenticate if session is invalid or no token
+            callback_servant = LoginCallbackServant()
+            callback_ref = register_login_callback(poa, callback_servant)
+            token = auth_service.login(username, password, callback_ref)
+            player_id = token[1]
+            session_token = token[0]
+            player_account = PlayerAccount(player_id, username, password)
+            SessionManager.set_session_token((session_token, player_id))
+            SessionManager.set_logged_in_player(player_account)
+
+            # Update SessionManager
+            SessionManager.set_auth_service(auth_service)
+            SessionManager.set_game_service(game_service)
+            SessionManager.set_server_ip(server_ip)
+
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Reconnected and re-authenticated successfully. New token: {token}")
+            return token
+
+        except Exception as e:
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Reconnection attempt {attempt} failed: {e}")
+            if attempt < max_attempts:
+                time.sleep(2)  # Wait 2 seconds before next attempt
+            continue
+
+    with console_lock:
+        print(f"[CLIENT | {current_time()} | {username}] Failed to reconnect after {max_attempts} attempts. Returning to login.")
+    SessionManager.set_session_token(None)
+    SessionManager.set_logged_in_player(None)
+    return None
+
 def reauthenticate(username, password, auth_service, poa):
     """Attempt to re-authenticate and return new token."""
     try:
@@ -314,7 +409,7 @@ def reauthenticate(username, password, auth_service, poa):
         token = auth_service.login(username, password, callback_ref)
         player_id = token[1]
         session_token = token[0]
-        player_account = PlayerAccount(player_id, username)
+        player_account = PlayerAccount(player_id, username, password)
         SessionManager.set_session_token((session_token, player_id))
         SessionManager.set_logged_in_player(player_account)
         with console_lock:
@@ -333,6 +428,19 @@ def reauthenticate(username, password, auth_service, poa):
         with console_lock:
             print(f"[CLIENT | {current_time()} | {username}] Re-authentication failed: {e}")
         return None
+
+def check_server_connection(game_service, username, token):
+    """Check if the server is responsive using a lightweight GameService call."""
+    if not token:
+        return False
+    session_token, _ = token
+    try:
+        game_service.getSetting("total_rounds", session_token)
+        return True
+    except Exception as e:
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Server connection check failed: {e}")
+        return False
 
 def start_game(game_service, username, token, auth_service):
     session_token, player_id = token
@@ -382,21 +490,19 @@ def start_game(game_service, username, token, auth_service):
             controller.play_round(username)
             if controller.current_round >= controller.total_rounds:
                 break  # Exit loop if all rounds are complete
-            if not controller.round_ended.wait(timeout=15):  # Increased timeout for round end
+            if not controller.round_ended.wait(timeout=15):
                 with console_lock:
                     print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to end. Checking game status...")
-                # Check if game has ended before breaking
                 if controller.game_ended.is_set():
                     break
             controller.round_ended.clear()
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Round {controller.current_round} ended. Winner: {controller.winner_name}, Word: {controller.secret_word}")
 
-        # Wait for game end with a longer timeout
         if not controller.game_ended.is_set() and not forced_logout_flag.is_set():
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Waiting for game to officially end...")
-            if not controller.game_ended.wait(timeout=60):  # Increased to 60 seconds
+            if not controller.game_ended.wait(timeout=60):
                 with console_lock:
                     print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for game to end. Forcing exit.")
             else:
@@ -408,10 +514,22 @@ def start_game(game_service, username, token, auth_service):
 
         return True
 
+    except CORBA.TRANSIENT:
+        player = SessionManager.get_logged_in_player()
+        if not player:
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] No player data available. Returning to login.")
+            return False
+
+        new_token = reconnect_to_server(SessionManager.get_server_ip(), username, player.password, SessionManager.get_poa(), token)
+        if new_token:
+            return start_game(SessionManager.get_game_service(), username, new_token, SessionManager.get_auth_service())
+        return False
+
     except GameIDL.NotLoggedInException:
         with console_lock:
             print(f"[CLIENT | {current_time()} | {username}] Session invalid (NotLoggedInException). Attempting to re-authenticate...")
-        new_token = reauthenticate(username, "1", auth_service, SessionManager.get_poa())
+        new_token = reauthenticate(username, SessionManager.get_logged_in_player().password, auth_service, SessionManager.get_poa())
         if new_token:
             return start_game(game_service, username, new_token, auth_service)
         return False
@@ -445,7 +563,8 @@ def non_blocking_input(prompt):
         print(prompt, end='', flush=True)
     choice = input().strip()
     if forced_logout_flag.is_set():
-        forced_logout_flag.clear()
+        with console_lock:
+            print(f"[CLIENT | {current_time()}] Forced logout detected. Checking session validity...")
         return None
     return choice
 
@@ -467,6 +586,7 @@ def main():
             root_poa = orb.resolve_initial_references("RootPOA")
             root_poa._get_the_POAManager().activate()
             SessionManager.init_orb(orb, root_poa)
+            SessionManager.set_server_ip(server_ip)
 
             orb_thread = threading.Thread(target=orb.run)
             orb_thread.daemon = True
@@ -548,7 +668,7 @@ def main():
             token = auth_service.login(username, password, callback_ref)
             player_id = token[1]
             session_token = token[0]
-            player_account = PlayerAccount(player_id, username)
+            player_account = PlayerAccount(player_id, username, password)
             SessionManager.set_session_token((session_token, player_id))
             SessionManager.set_logged_in_player(player_account)
             login_attempts = 0  # Reset attempts on success
@@ -556,18 +676,38 @@ def main():
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Login successful!")
                 print(f"Token: {token}")
-
-            if forced_logout_flag.is_set():
-                forced_logout_flag.clear()
-                continue
+                print("WARNING: Ensure only one client is running with these credentials to avoid forced logouts.")
 
             while True:
                 try:
+                    # Check server connection before displaying menu
+                    if not check_server_connection(game_service, username, token):
+                        new_token = reconnect_to_server(SessionManager.get_server_ip(), username, password, poa, token)
+                        if not new_token:
+                            break
+                        token = new_token
+                        auth_service = SessionManager.get_auth_service()
+                        game_service = SessionManager.get_game_service()
+
                     display_menu()
                     choice = non_blocking_input(f"[CLIENT | {current_time()} | {username}] Select an option: ")
-                    if choice is None or forced_logout_flag.is_set():
-                        forced_logout_flag.clear()
-                        break
+                    if choice is None:
+                        # Check if session is still valid
+                        if check_server_connection(game_service, username, token):
+                            with console_lock:
+                                print(f"[CLIENT | {current_time()} | {username}] Session still valid. Continuing in lobby.")
+                            continue
+                        else:
+                            with console_lock:
+                                print(f"[CLIENT | {current_time()} | {username}] Session invalid after forced logout. Attempting to reconnect...")
+                            new_token = reconnect_to_server(SessionManager.get_server_ip(), username, password, poa, token)
+                            if not new_token:
+                                break
+                            token = new_token
+                            auth_service = SessionManager.get_auth_service()
+                            game_service = SessionManager.get_game_service()
+                            continue
+
                     if not choice:
                         continue
                     choice = choice.lower()
@@ -593,7 +733,14 @@ def main():
                 except Exception as e:
                     with console_lock:
                         print(f"[CLIENT | {current_time()} | {username}] Error in menu: {e}")
-                    continue
+                    # Check if error is due to server disconnection
+                    if isinstance(e, CORBA.TRANSIENT):
+                        new_token = reconnect_to_server(SessionManager.get_server_ip(), username, password, poa, token)
+                        if not new_token:
+                            break
+                        token = new_token
+                        auth_service = SessionManager.get_auth_service()
+                        game_service = SessionManager.get_game_service()
 
         except AuthenticationIDL.AlreadyLoggedInException:
             login_attempts += 1
