@@ -124,6 +124,8 @@ class GameController:
         self.secret_word = ""
         self.revealed_word = []
         self.lives = 0
+        self.round_time_limit = 0  # Time limit for each round in seconds
+        self.round_start_time = 0  # Timestamp when round starts
         self.round_started = threading.Event()
         self.round_ended = threading.Event()
         self.game_ended = threading.Event()
@@ -136,7 +138,7 @@ class GameController:
         except Exception as e:
             with console_lock:
                 print(f"Error getting setting {key}: {e}")
-            return 0
+            return 60 if key == "round_time" else 0  # Default to 60 seconds for round_time
 
     def handle_round_start(self, round_number):
         if self.current_round == round_number:
@@ -146,11 +148,14 @@ class GameController:
             self.secret_word = self.game_service.getRandomWord(self.game_token, round_number, self.player_id, self.session_token)
             self.revealed_word = ['_'] * len(self.secret_word)
             self.lives = self.get_setting("number_of_lives")
+            self.round_time_limit = self.get_setting("round_time")  # Fetch round time limit
+            self.round_start_time = time.time()  # Record start time
             self.round_ended.clear()
             with console_lock:
                 print(f"\nRound {round_number} started!")
                 print(f"Word to guess: {' '.join(self.revealed_word)}")
                 print(f"Lives: {self.lives}")
+                print(f"Time limit: {self.round_time_limit} seconds")
             self.round_started.set()
         except Exception as e:
             with console_lock:
@@ -159,9 +164,18 @@ class GameController:
 
     def play_round(self, username):
         while not self.round_ended.is_set():
+            # Calculate remaining time
+            elapsed_time = time.time() - self.round_start_time
+            remaining_time = max(0, self.round_time_limit - elapsed_time)
+            if remaining_time <= 0:
+                with console_lock:
+                    print(f"\n[CLIENT | {current_time()} | {username}] Time's up! Round over.")
+                self.round_ended.set()
+                break
             with console_lock:
                 print(f"\n[CLIENT | {current_time()} | {username}] Word: {' '.join(self.revealed_word)}")
                 print(f"[CLIENT | {current_time()} | {username}] Lives: {self.lives}")
+                print(f"[CLIENT | {current_time()} | {username}] Time remaining: {int(remaining_time)} seconds")
                 print(f"[CLIENT | {current_time()} | {username}] Enter a letter (or 'quit' to leave): ", end='', flush=True)
             guess = input().strip().upper()
             if guess == 'QUIT':
