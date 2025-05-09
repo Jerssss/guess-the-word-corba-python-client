@@ -372,7 +372,7 @@ def start_game(game_service, username, token, auth_service):
 
         game_service.startRound(game_token, 1, player_id, session_token)
 
-        # Game loop adjusted to exit after last round
+        # Game loop adjusted to wait for game end
         while controller.current_round <= controller.total_rounds and not controller.game_ended.is_set() and not forced_logout_flag.is_set():
             if not controller.round_started.wait(timeout=30):
                 with console_lock:
@@ -382,17 +382,26 @@ def start_game(game_service, username, token, auth_service):
             controller.play_round(username)
             if controller.current_round >= controller.total_rounds:
                 break  # Exit loop if all rounds are complete
-            if not controller.round_ended.wait(timeout=10):  # Reduced timeout to 10 seconds
+            if not controller.round_ended.wait(timeout=15):  # Increased timeout for round end
                 with console_lock:
-                    print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to end. Exiting game.")
-                break
+                    print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to end. Checking game status...")
+                # Check if game has ended before breaking
+                if controller.game_ended.is_set():
+                    break
             controller.round_ended.clear()
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Round {controller.current_round} ended. Winner: {controller.winner_name}, Word: {controller.secret_word}")
 
-        if not controller.game_ended.is_set() and not forced_logout_flag.is_set() and not controller.game_ended.wait(timeout=10):  # Reduced timeout
+        # Wait for game end with a longer timeout
+        if not controller.game_ended.is_set() and not forced_logout_flag.is_set():
             with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for game to end. Exiting.")
+                print(f"[CLIENT | {current_time()} | {username}] Waiting for game to officially end...")
+            if not controller.game_ended.wait(timeout=60):  # Increased to 60 seconds
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for game to end. Forcing exit.")
+            else:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Game ended. Overall winner: {controller.champion}")
         else:
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Game ended. Overall winner: {controller.champion}")
