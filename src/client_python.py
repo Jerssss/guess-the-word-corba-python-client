@@ -1,5 +1,12 @@
 import sys
 import threading
+import platform
+import time
+import re
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 from omniORB import CORBA
 import CosNaming
 import AuthenticationIDL
@@ -7,7 +14,6 @@ import GameIDL
 import PlayerCallBackIDL
 import PlayerCallBackIDL__POA
 from datetime import datetime
-import time
 from about import About
 
 # Lock for synchronizing console output
@@ -110,7 +116,11 @@ class LoginCallbackServant(PlayerCallBackIDL__POA.LoginCallbackService):
     def notifyForcedLogout(self, playerId, sessionToken):
         with console_lock:
             print(f"[Callback] Forced logout for player {playerId}, invalidating token: {sessionToken}")
-        forced_logout_flag.set()  # Signal menu loop to refresh
+            print("Another client may have logged in with the same credentials. Please ensure only one client is active.")
+        SessionManager.set_session_token(None)  # Clear session token
+        SessionManager.set_logged_in_player(None)  # Clear logged-in player
+        forced_logout_flag.set()  # Signal to return to login
+        time.sleep(1)  # Brief delay to stabilize server state
 
 # Game Controller to manage game state and logic
 class GameController:
@@ -164,6 +174,11 @@ class GameController:
 
     def play_round(self, username):
         while not self.round_ended.is_set():
+            if forced_logout_flag.is_set():
+                with console_lock:
+                    print(f"\n[CLIENT | {current_time()} | {username}] Session invalidated. Returning to login.")
+                self.round_ended.set()
+                break
             # Calculate remaining time
             elapsed_time = time.time() - self.round_start_time
             remaining_time = max(0, self.round_time_limit - elapsed_time)
@@ -178,6 +193,11 @@ class GameController:
                 print(f"[CLIENT | {current_time()} | {username}] Time remaining: {int(remaining_time)} seconds")
                 print(f"[CLIENT | {current_time()} | {username}] Enter a letter (or 'quit' to leave): ", end='', flush=True)
             guess = input().strip().upper()
+            if forced_logout_flag.is_set():
+                with console_lock:
+                    print(f"\n[CLIENT | {current_time()} | {username}] Session invalidated. Returning to login.")
+                self.round_ended.set()
+                break
             if guess == 'QUIT':
                 with console_lock:
                     print(f"[CLIENT | {current_time()} | {username}] Quitting the round...")
@@ -262,14 +282,52 @@ def display_menu():
         print("2. View Leaderboard")
         print("3. About")
         print("4. Quit")
+        print("(Type 'exit' to exit the client)")
 
-def start_game(game_service, username, token):
+def reauthenticate(username, password, auth_service, poa):
+    """Attempt to re-authenticate and return new token."""
+    try:
+        callback_servant = LoginCallbackServant()
+        callback_ref = register_login_callback(poa, callback_servant)
+        token = auth_service.login(username, password, callback_ref)
+        player_id = token[1]
+        session_token = token[0]
+        player_account = PlayerAccount(player_id, username)
+        SessionManager.set_session_token((session_token, player_id))
+        SessionManager.set_logged_in_player(player_account)
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Re-authentication successful!")
+            print(f"New token: {token}")
+        return token
+    except AuthenticationIDL.AlreadyLoggedInException:
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Another client is already logged in. Please try again.")
+        return None
+    except AuthenticationIDL.AuthenticationException:
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Re-authentication failed: Invalid credentials.")
+        return None
+    except Exception as e:
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Re-authentication failed: {e}")
+        return None
+
+def start_game(game_service, username, token, auth_service):
     session_token, player_id = token
     with console_lock:
         print(f"[CLIENT | {current_time()} | {username}] Starting a new game...")
         print(f"[CLIENT | {current_time()} | {username}] Joining the waiting room...")
 
     try:
+        # Verify session token validity
+        if not SessionManager.get_session_token():
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Session token invalid. Please log in again.")
+            return False
+
+        # Brief delay to avoid race conditions with forced logout
+        time.sleep(0.5)
+
         # Join the lobby
         game_token = game_service.joinLobby(player_id, session_token)
         with console_lock:
@@ -286,7 +344,7 @@ def start_game(game_service, username, token):
             print(f"[CLIENT | {current_time()} | {username}] Countdown finished. Current players: {player_count}")
             if player_count < 2:
                 print(f"[CLIENT | {current_time()} | {username}] Not enough players joined within 10 seconds. Returning to home screen.")
-                return
+                return True
             print(f"[CLIENT | {current_time()} | {username}] Enough players joined! Starting game...")
 
         # Initialize game controller
@@ -303,8 +361,8 @@ def start_game(game_service, username, token):
 
         # Game loop with timeout
         while controller.current_round <= controller.total_rounds:
-            if controller.game_ended.is_set():
-                break  # Exit loop if game has ended
+            if controller.game_ended.is_set() or forced_logout_flag.is_set():
+                break  # Exit loop if game has ended or forced logout
             if not controller.round_started.wait(timeout=30):  # Wait up to 30 seconds
                 with console_lock:
                     print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to start. Exiting game.")
@@ -320,68 +378,151 @@ def start_game(game_service, username, token):
                 print(f"[CLIENT | {current_time()} | {username}] Round {controller.current_round} ended. Winner: {controller.winner_name}, Word: {controller.secret_word}")
 
         # Wait for game end
-        if not controller.game_ended.is_set() and not controller.game_ended.wait(timeout=30):  # Wait up to 30 seconds
+        if not controller.game_ended.is_set() and not forced_logout_flag.is_set() and not controller.game_ended.wait(timeout=30):  # Wait up to 30 seconds
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for game to end. Exiting.")
         else:
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Game ended. Overall winner: {controller.champion}")
 
+        return True
+
+    except GameIDL.NotLoggedInException:
+        with console_lock:
+            print(f"[CLIENT | {current_time()} | {username}] Session invalid (NotLoggedInException). Attempting to re-authenticate...")
+        # Attempt re-authentication
+        new_token = reauthenticate(username, "1", auth_service, SessionManager.get_poa())
+        if new_token:
+            return start_game(game_service, username, new_token, auth_service)  # Retry with new token
+        return False
     except GameIDL.NotEnoughPlayersException:
         with console_lock:
             print(f"[CLIENT | {current_time()} | {username}] Not enough players to start the game after waiting.")
+        return True
     except Exception as e:
         with console_lock:
             print(f"[CLIENT | {current_time()} | {username}] Error during game: {e}")
+        return True
 
 def about():
     about_info = About()
     about_info.display()
 
+def is_valid_ip_or_hostname(address):
+    """Validate if the input is a valid IPv4 address or hostname."""
+    if not address:
+        return True  # Allow empty input for default 'localhost'
+    # Check for valid IPv4 address
+    ipv4_pattern = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    if re.match(ipv4_pattern, address):
+        return True
+    # Check for valid hostname (basic validation)
+    hostname_pattern = r'^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+$'
+    if re.match(hostname_pattern, address) or address == "localhost":
+        return True
+    return False
+
+def non_blocking_input(prompt, timeout=0.1):
+    """Read input non-blocking on Windows using msvcrt, or blocking input on other platforms."""
+    if platform.system() == "Windows" and msvcrt:
+        with console_lock:
+            print(prompt, end='', flush=True)
+        buffer = ""
+        while True:
+            if forced_logout_flag.is_set():
+                with console_lock:
+                    print()  # Ensure newline after prompt
+                return None  # Exit immediately if forced logout
+            if msvcrt.kbhit():
+                char = msvcrt.getch().decode('utf-8', errors='ignore')
+                if char == '\r':  # Enter key pressed
+                    with console_lock:
+                        print()  # Ensure newline after input
+                    return buffer.strip()
+                if char.isprintable():  # Only append printable characters
+                    buffer += char
+                    with console_lock:
+                        print(char, end='', flush=True)  # Echo input
+            time.sleep(timeout)  # Brief sleep to reduce CPU usage
+    else:
+        # Fallback to blocking input for non-Windows or if msvcrt is unavailable
+        with console_lock:
+            print(prompt, end='', flush=True)
+        choice = input().strip()
+        if forced_logout_flag.is_set():
+            forced_logout_flag.clear()
+            return None
+        return choice
+
 def main():
-    print(f"[CLIENT | {current_time()}] Enter server IP address (or press Enter for default 'localhost'): ", end='')
-    server_ip = input().strip() or "localhost"
+    while True:
+        print(f"[CLIENT | {current_time()}] Enter server IP address (or press Enter for default 'localhost'): ", end='')
+        server_ip = input().strip() or "localhost"
+        if not is_valid_ip_or_hostname(server_ip):
+            with console_lock:
+                print(f"[CLIENT | {current_time()}] Invalid IP address or hostname: {server_ip}. Please enter a valid IPv4 address (e.g., 192.168.1.1) or hostname (e.g., localhost).")
+            continue
 
-    # Initialize ORB
-    orb_args = sys.argv + ['-ORBInitRef', f'NameService=corbaloc::{server_ip}:1050/NameService']
-    orb = CORBA.ORB_init(orb_args, CORBA.ORB_ID)
-    print("Step 1: ORB initialized")
+        try:
+            # Initialize ORB
+            orb_args = sys.argv + ['-ORBInitRef', f'NameService=corbaloc::{server_ip}:1050/NameService']
+            orb = CORBA.ORB_init(orb_args, CORBA.ORB_ID)
+            with console_lock:
+                print("Step 1: ORB initialized")
 
-    # Resolve RootPOA and activate POA Manager
-    root_poa = orb.resolve_initial_references("RootPOA")
-    root_poa._get_the_POAManager().activate()
-    SessionManager.init_orb(orb, root_poa)
+            # Resolve RootPOA and activate POA Manager
+            root_poa = orb.resolve_initial_references("RootPOA")
+            root_poa._get_the_POAManager().activate()
+            SessionManager.init_orb(orb, root_poa)
 
-    # Start ORB event loop in a separate thread
-    orb_thread = threading.Thread(target=orb.run)
-    orb_thread.daemon = True
-    orb_thread.start()
+            # Start ORB event loop in a separate thread
+            orb_thread = threading.Thread(target=orb.run)
+            orb_thread.daemon = True
+            orb_thread.start()
 
-    # Resolve NameService
-    obj = orb.resolve_initial_references("NameService")
-    naming_context = obj._narrow(CosNaming.NamingContextExt)
-    if naming_context is None:
-        print("FAILED: NamingContextExt narrowing returned None")
-        sys.exit(1)
-    print("Step 2: NameService resolved and narrowed")
+            # Resolve NameService
+            obj = orb.resolve_initial_references("NameService")
+            naming_context = obj._narrow(CosNaming.NamingContextExt)
+            if naming_context is None:
+                with console_lock:
+                    print("FAILED: NamingContextExt narrowing returned None")
+                sys.exit(1)
+            with console_lock:
+                print("Step 2: NameService resolved and narrowed")
 
-    # Resolve AuthenticationService
-    auth_obj = naming_context.resolve_str("AuthenticationService")
-    auth_service = auth_obj._narrow(AuthenticationIDL.AuthenticationService)
-    if auth_service is None:
-        print("FAILED: AuthenticationService narrowing returned None")
-        sys.exit(1)
-    SessionManager.set_auth_service(auth_service)
-    print("Step 3: AuthenticationService resolved")
+            # Resolve AuthenticationService
+            auth_obj = naming_context.resolve_str("AuthenticationService")
+            auth_service = auth_obj._narrow(AuthenticationIDL.AuthenticationService)
+            if auth_service is None:
+                with console_lock:
+                    print("FAILED: AuthenticationService narrowing returned None")
+                sys.exit(1)
+            SessionManager.set_auth_service(auth_service)
+            with console_lock:
+                print("Step 3: AuthenticationService resolved")
 
-    # Resolve GameService
-    game_obj = naming_context.resolve_str("GameService")
-    game_service = game_obj._narrow(GameIDL.GameService)
-    if game_service is None:
-        print("FAILED: GameService narrowing returned None")
-        sys.exit(1)
-    SessionManager.set_game_service(game_service)
-    print("Step 4: GameService resolved")
+            # Resolve GameService
+            game_obj = naming_context.resolve_str("GameService")
+            game_service = game_obj._narrow(GameIDL.GameService)
+            if game_service is None:
+                with console_lock:
+                    print("FAILED: GameService narrowing returned None")
+                sys.exit(1)
+            SessionManager.set_game_service(game_service)
+            with console_lock:
+                print("Step 4: GameService resolved")
+
+            break  # Exit IP input loop on successful initialization
+
+        except CORBA.TRANSIENT as e:
+            with console_lock:
+                print(f"[CLIENT | {current_time()}] Failed to connect to NameService at {server_ip}:1050: {e}")
+                print("Possible causes:")
+                print("- The server IP address or hostname is incorrect.")
+                print("- The server is not running or not listening on port 1050.")
+                print("- A network issue (e.g., firewall) is blocking the connection.")
+                print("Please verify the server is running and the IP/port are correct, then try again.")
+            continue  # Prompt for a new IP address
 
     while True:
         with console_lock:
@@ -403,6 +544,14 @@ def main():
                 print(f"[CLIENT | {current_time()}] Username or password cannot be empty!")
             continue
 
+        # Check for recent forced logout to prevent immediate re-prompt
+        if forced_logout_flag.is_set():
+            with console_lock:
+                print(f"[CLIENT | {current_time()}] Waiting due to recent forced logout. Please try again shortly.")
+            forced_logout_flag.clear()
+            time.sleep(2)  # Delay to stabilize
+            continue
+
         try:
             # Create and register login callback
             callback_servant = LoginCallbackServant()
@@ -421,45 +570,57 @@ def main():
                 print(f"[CLIENT | {current_time()} | {username}] Login successful!")
                 print(f"Token: {token}")
 
+            # Check for forced logout during login
+            if forced_logout_flag.is_set():
+                forced_logout_flag.clear()
+                continue  # Return to login loop
+
             while True:
-                display_menu()
-                while True:
-                    with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Select an option: ", end='', flush=True)
-                    choice = input().strip()
-                    if forced_logout_flag.is_set():
+                try:
+                    display_menu()
+                    choice = non_blocking_input(f"[CLIENT | {current_time()} | {username}] Select an option: ")
+                    if choice is None or forced_logout_flag.is_set():  # Forced logout detected
                         forced_logout_flag.clear()
+                        break  # Exit menu loop to return to login
+                    if not choice:
+                        continue  # Redisplay menu if input is empty
+                    choice = choice.lower()
+                    if choice == "1":
+                        if not start_game(game_service, username, token, auth_service):
+                            break  # Return to login if session invalid
+                    elif choice == "2":
                         with console_lock:
-                            print()  # Ensure newline after callback
-                        break  # Redisplay menu
-                    if choice:
-                        break  # Valid input received
-                if not choice:
-                    continue  # Redisplay menu if input was interrupted
-                if choice == "1":
-                    start_game(game_service, username, token)
-                elif choice == "2":
+                            print("Leaderboard feature not implemented yet.")
+                    elif choice == "3":
+                        about()
+                    elif choice == "4":
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Logging Out...")
+                        break
+                    elif choice == "exit":
+                        with console_lock:
+                            print("Exiting login client.")
+                        return  # Exit main() entirely
+                    else:
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Invalid choice. Please enter 1, 2, 3, 4, or 'exit'.")
+                except Exception as e:
                     with console_lock:
-                        print("Leaderboard feature not implemented yet.")
-                elif choice == "3":
-                    about()
-                elif choice == "4":
-                    with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Logging Out...")
-                    break
-                else:
-                    with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Invalid choice. Please try again.")
+                        print(f"[CLIENT | {current_time()} | {username}] Error in menu: {e}")
+                    continue  # Redisplay menu on error
 
         except AuthenticationIDL.AlreadyLoggedInException:
             with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Already logged in.")
+                print(f"[CLIENT | {current_time()} | {username}] Already logged in. Another client may be active.")
+                print("Please ensure only one client is using these credentials.")
+            time.sleep(2)  # Delay to prevent rapid retries
         except AuthenticationIDL.AuthenticationException:
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Invalid username or password.")
         except Exception as e:
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Login failed: {e}")
+                print("Please try again or check server status.")
 
 if __name__ == "__main__":
     main()
