@@ -111,8 +111,6 @@ def main():
                 continue
 
         # Login loop
-        login_attempts = 0
-        max_login_attempts = 3
         login_manager = LoginManager(auth_service, poa)
         while True:
             # Check for forced logout before prompting for input
@@ -183,15 +181,6 @@ def main():
                         print(f"[CLIENT | {current_time()}] Reinitialized ORB and services successfully.")
 
                 token = login_manager.login(username, password)
-                if not token:
-                    login_attempts += 1
-                    if login_attempts >= max_login_attempts:
-                        with console_lock:
-                            print(f"[CLIENT | {current_time()} | {username}] Max login attempts reached. Please wait and try again.")
-                        time.sleep(5)
-                        login_attempts = 0
-                    continue
-                login_attempts = 0
 
                 with console_lock:
                     print(f"[CLIENT | {current_time()} | {username}] Login successful!")
