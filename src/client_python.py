@@ -6,6 +6,7 @@ import GameIDL
 import PlayerCallBackIDL
 import PlayerCallBackIDL__POA
 from session import SessionManager
+from player import PlayerAccount
 from login import LoginManager
 from game import GameManager
 from connection import initialize_orb, reconnect_to_server, check_server_connection, cleanup_orb
@@ -114,6 +115,15 @@ def main():
         max_login_attempts = 3
         login_manager = LoginManager(auth_service, poa)
         while True:
+            # Check for forced logout before prompting for input
+            if forced_logout_flag.is_set():
+                with console_lock:
+                    print(f"[CLIENT | {current_time()}] Forced logout detected. Returning to login.")
+                forced_logout_flag.clear()
+                SessionManager.set_session_token(None)
+                SessionManager.set_logged_in_player(None)
+                continue  # Restart login loop without waiting for input
+
             with console_lock:
                 print("\n--- LOGIN ---")
                 print(f"[CLIENT | {current_time()}] Enter username (or type 'exit' to quit): ", end='')
@@ -124,6 +134,15 @@ def main():
                 cleanup_orb()
                 return
 
+            # Check again for forced logout before password prompt
+            if forced_logout_flag.is_set():
+                with console_lock:
+                    print(f"[CLIENT | {current_time()}] Forced logout detected. Returning to login.")
+                forced_logout_flag.clear()
+                SessionManager.set_session_token(None)
+                SessionManager.set_logged_in_player(None)
+                continue  # Restart login loop without waiting for input
+
             with console_lock:
                 print(f"[CLIENT | {current_time()}] Enter password: ", end='')
             password = input().strip()
@@ -131,13 +150,6 @@ def main():
             if not username or not password:
                 with console_lock:
                     print(f"[CLIENT | {current_time()}] Username or password cannot be empty!")
-                continue
-
-            if forced_logout_flag.is_set():
-                with console_lock:
-                    print(f"[CLIENT | {current_time()}] Waiting due to recent forced logout. Please try again shortly.")
-                forced_logout_flag.clear()
-                time.sleep(2)
                 continue
 
             try:
@@ -182,15 +194,29 @@ def main():
                 login_attempts = 0
 
                 with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Login successful!")
+                    print(f"Token: {token}")
                     print("WARNING: Ensure only one client is running with these credentials to avoid forced logouts.")
 
                 # Menu loop
                 game_manager = GameManager(game_service, auth_service, poa)
                 while True:
                     try:
+                        # Check for forced logout before any input or server check
+                        if forced_logout_flag.is_set():
+                            with console_lock:
+                                print(f"[CLIENT | {current_time()} | {username}] Forced logout detected. Returning to login.")
+                            forced_logout_flag.clear()
+                            SessionManager.set_session_token(None)
+                            SessionManager.set_logged_in_player(None)
+                            break
+
+                        # Check server connection
                         if not check_server_connection(game_service, username, token):
                             new_token = reconnect_to_server(server_ip, username, password, token)
                             if not new_token:
+                                with console_lock:
+                                    print(f"[CLIENT | {current_time()} | {username}] Failed to reconnect. Returning to login.")
                                 break
                             token = new_token
                             auth_service = SessionManager.get_auth_service()
@@ -198,25 +224,11 @@ def main():
                             login_manager = LoginManager(auth_service, poa)
                             game_manager = GameManager(game_service, auth_service, poa)
 
+                        # Display menu and get user choice
                         display_menu()
                         choice = non_blocking_input(f"[CLIENT | {current_time()} | {username}] Select an option: ")
                         if choice is None:
-                            if check_server_connection(game_service, username, token):
-                                with console_lock:
-                                    print(f"[CLIENT | {current_time()} | {username}] Session still valid. Continuing in lobby.")
-                                continue
-                            else:
-                                with console_lock:
-                                    print(f"[CLIENT | {current_time()} | {username}] Session invalid after forced logout. Attempting to reconnect...")
-                                new_token = reconnect_to_server(server_ip, username, password, token)
-                                if not new_token:
-                                    break
-                                token = new_token
-                                auth_service = SessionManager.get_auth_service()
-                                game_service = SessionManager.get_game_service()
-                                login_manager = LoginManager(auth_service, poa)
-                                game_manager = GameManager(game_service, auth_service, poa)
-                                continue
+                            continue
 
                         if not choice:
                             continue
@@ -246,6 +258,8 @@ def main():
                             print(f"[CLIENT | {current_time()} | {username}] Server disconnected in menu: {e}")
                         new_token = reconnect_to_server(server_ip, username, password, token)
                         if not new_token:
+                            with console_lock:
+                                print(f"[CLIENT | {current_time()} | {username}] Failed to reconnect. Returning to login.")
                             break
                         token = new_token
                         auth_service = SessionManager.get_auth_service()

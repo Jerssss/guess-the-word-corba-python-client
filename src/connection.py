@@ -8,7 +8,7 @@ import AuthenticationIDL
 import GameIDL
 from common import current_time, console_lock, forced_logout_flag
 from session import SessionManager
-from login import LoginManager  # Changed to import LoginManager instead of LoginCallbackServant
+from login import LoginManager
 
 def is_server_available(server_ip, port=1050, timeout=1):
     try:
