@@ -227,6 +227,52 @@ def main():
                         # Display menu and get user choice
                         display_menu()
                         choice = non_blocking_input(f"[CLIENT | {current_time()} | {username}] Select an option: ")
+                        if choice == 'forced_logout':
+                            with console_lock:
+                                print(f"[CLIENT | {current_time()} | {username}] Forced logout detected. Returning to login.")
+                            SessionManager.set_session_token(None)
+                            SessionManager.set_logged_in_player(None)
+                            break
+                        elif not choice:
+                            continue
+                        choice = choice.lower()
+                        if choice == "1":
+                            if not game_manager.start_game(username, token):
+                                break
+                        elif choice == "2":
+                            with console_lock:
+                                print("Leaderboard feature not implemented yet.")
+                        elif choice == "3":
+                            about()
+                        elif choice == "4":
+                            with console_lock:
+                                print(f"[CLIENT | {current_time()} | {username}] Logging Out...")
+                            break
+                        elif choice == "exit":
+                            with console_lock:
+                                print("Exiting login client.")
+                            cleanup_orb()
+                            return
+                        else:
+                            with console_lock:
+                                print(f"[CLIENT | {current_time()} | {username}] Invalid choice. Please enter 1, 2, 3, 4, or 'exit'.")
+                    except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST) as e:
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Server disconnected in menu: {e}")
+                        new_token = reconnect_to_server(server_ip, username, password, token)
+                        if not new_token:
+                            with console_lock:
+                                print(f"[CLIENT | {current_time()} | {username}] Failed to reconnect. Returning to login.")
+                            break
+                        token = new_token
+                        auth_service = SessionManager.get_auth_service()
+                        game_service = SessionManager.get_game_service()
+                        login_manager = LoginManager(auth_service, poa)
+                        game_manager = GameManager(game_service, auth_service, poa)
+
+                        # Display menu and get user choice
+                        display_menu()
+                        choice = non_blocking_input(f"[CLIENT | {current_time()} | {username}] Select an option: ")
                         if choice is None:
                             continue
 

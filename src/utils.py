@@ -1,6 +1,12 @@
 import re
+import sys
+import time
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import select
 from about import About
-from common import console_lock, forced_logout_flag
+from common import console_lock, forced_logout_flag, current_time
 
 def display_menu():
     print("\n=== Game Lobby ===")
@@ -22,15 +28,22 @@ def is_valid_ip_or_hostname(address):
     return False
 
 def non_blocking_input(prompt):
-    from common import current_time
     with console_lock:
         print(prompt, end='', flush=True)
-    choice = input().strip()
-    if forced_logout_flag.is_set():
-        with console_lock:
-            print(f"[CLIENT | {current_time()}] Forced logout detected. Checking session validity...")
-        return None
-    return choice
+    while True:
+        if forced_logout_flag.is_set():
+            forced_logout_flag.clear()
+            return 'forced_logout'
+        if sys.platform == "win32":
+            if msvcrt.kbhit():
+                choice = input().strip()
+                return choice
+            time.sleep(0.1)  # Short sleep to prevent busy-waiting
+        else:
+            rlist, _, _ = select.select([sys.stdin], [], [], 0.1)  # 0.1-second timeout
+            if rlist:
+                choice = sys.stdin.readline().strip()
+                return choice
 
 def about():
     about_info = About()
