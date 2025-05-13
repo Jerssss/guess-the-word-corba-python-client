@@ -42,21 +42,12 @@ class LoginManager:
             player_account = PlayerAccount(player_id, username, password)
             SessionManager.set_session_token((session_token, player_id))
             SessionManager.set_logged_in_player(player_account)
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Login successful!")
-                print(f"Token: {token}")
             return token
         except AuthenticationIDL.AlreadyLoggedInException:
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Already logged in. Another client may be active.")
             return None
         except AuthenticationIDL.AuthenticationException:
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Invalid username or password.")
             return None
         except Exception as e:
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Login failed: {e}")
             return None
 
     def reauthenticate(self, username, password):
@@ -69,19 +60,10 @@ class LoginManager:
             player_account = PlayerAccount(player_id, username, password)
             SessionManager.set_session_token((session_token, player_id))
             SessionManager.set_logged_in_player(player_account)
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Re-authentication successful!")
-                print(f"Token: {token}")
             return token
         except AuthenticationIDL.AlreadyLoggedInException:
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Another client is already logged in. Please try again.")
             return None
         except AuthenticationIDL.AuthenticationException:
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Re-authentication failed: Invalid credentials.")
             return None
         except Exception as e:
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Re-authentication failed: {e}")
             return None
