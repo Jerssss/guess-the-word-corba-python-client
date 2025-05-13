@@ -21,6 +21,13 @@ def main():
     auth_service = None
     game_service = None
 
+    with console_lock:
+        print(r" _  _  ____  __     ___  __   _  _  ____    ____  __     ____  _  _  ____  _  _   __   __ _     ___  __    __  ____  __ _  ____ ")
+        print(r"/ )( \(  __)(  )   / __)/  \ ( \/ )(  __)  (_  _)/  \   (  _ \( \/ )(_  _)/ )( \ /  \ (  ( \   / __)(  )  (  )(  __)(  ( \(_  _)")
+        print(r"\ /\ / ) _) / (_/\( (__(  O )/ \/ \ ) _)     )( (  O )   ) __/ )  /   )(  ) __ ((  O )/    /  ( (__ / (_/\ )(  ) _) /    /  )(  ")
+        print(r"(_/\_)(____)\____/ \___)\__/ \_)(_/(____)   (__) \__/   (__)  (__/   (__) \_)(_/ \__/ \_)__)   \___)\____/(__)(____)\_)__) (__) ")
+        print()
+
     while True:
         # Prompt for server IP if not set
         if not server_ip:
@@ -29,7 +36,8 @@ def main():
             server_ip = input().strip() or "localhost"
             if not is_valid_ip_or_hostname(server_ip):
                 with console_lock:
-                    print(f"[CLIENT | {current_time()}] Invalid IP address or hostname: {server_ip}. Please enter a valid IPv4 address (e.g., 192.168.1.1) or hostname (e.g., localhost).")
+                    print(f"[CLIENT | {current_time()}] Invalid IP address or hostname: {server_ip}")
+                    print("  Please enter a valid IPv4 address (e.g., 192.168.1.1) or hostname (e.g., localhost)")
                 server_ip = None
                 continue
 
@@ -46,7 +54,7 @@ def main():
                     SessionManager.init_orb(orb, poa, orb_thread)
                     SessionManager.set_server_ip(server_ip)
                     with console_lock:
-                        print("Step 1: ORB initialized")
+                        print("Step 1: ORB initialized successfully")
 
                 if not auth_service or not game_service:
                     obj = orb.resolve_initial_references("NameService")
@@ -96,11 +104,11 @@ def main():
             except (CORBA.TRANSIENT, CORBA.COMM_FAILURE, CORBA.OBJECT_NOT_EXIST) as e:
                 with console_lock:
                     print(f"[CLIENT | {current_time()}] Failed to connect to NameService at {server_ip}:1050: {e}")
-                    print("Possible causes:")
-                    print("- The server IP address or hostname is incorrect.")
-                    print("- The server is not running or not listening on port 1050.")
-                    print("- A network issue (e.g., firewall) is blocking the connection.")
-                    print("Please verify the server is running and the IP/port are correct, then try again.")
+                    print("  Possible causes:")
+                    print("    - The server IP address or hostname is incorrect")
+                    print("    - The server is not running or not listening on port 1050")
+                    print("    - A network issue (e.g., firewall) is blocking the connection")
+                    print("  Please verify the server is running and the IP/port are correct, then try again")
                 cleanup_orb()
                 orb = None
                 poa = None
@@ -116,30 +124,33 @@ def main():
             # Check for forced logout before prompting for input
             if forced_logout_flag.is_set():
                 with console_lock:
-                    print(f"[CLIENT | {current_time()}] Forced logout detected. Returning to login.")
+                    print(f"[CLIENT | {current_time()}] Forced logout detected. Returning to login")
                 forced_logout_flag.clear()
                 SessionManager.set_session_token(None)
                 SessionManager.set_logged_in_player(None)
-                continue  # Restart login loop without waiting for input
+                continue
 
             with console_lock:
-                print("\n--- LOGIN ---")
+                print("\n----------")
+                print("Login Screen")
+                print("----------")
                 print(f"[CLIENT | {current_time()}] Enter username (or type 'exit' to quit): ", end='')
             username = input().strip()
             if username.lower() == 'exit':
                 with console_lock:
-                    print("Exiting login client.")
+                    print(f"[CLIENT | {current_time()}] Exiting login client")
+                    print("----------")
                 cleanup_orb()
                 return
 
             # Check again for forced logout before password prompt
             if forced_logout_flag.is_set():
                 with console_lock:
-                    print(f"[CLIENT | {current_time()}] Forced logout detected. Returning to login.")
+                    print(f"[CLIENT | {current_time()}] Forced logout detected. Returning to login")
                 forced_logout_flag.clear()
                 SessionManager.set_session_token(None)
                 SessionManager.set_logged_in_player(None)
-                continue  # Restart login loop without waiting for input
+                continue
 
             with console_lock:
                 print(f"[CLIENT | {current_time()}] Enter password: ", end='')
@@ -147,7 +158,7 @@ def main():
 
             if not username or not password:
                 with console_lock:
-                    print(f"[CLIENT | {current_time()}] Username or password cannot be empty!")
+                    print(f"[CLIENT | {current_time()}] Username or password cannot be empty")
                 continue
 
             try:
@@ -178,129 +189,97 @@ def main():
                     SessionManager.set_game_service(game_service)
                     login_manager = LoginManager(auth_service, poa)
                     with console_lock:
-                        print(f"[CLIENT | {current_time()}] Reinitialized ORB and services successfully.")
+                        print(f"[CLIENT | {current_time()}] Reinitialized ORB and services successfully")
 
-                token = login_manager.login(username, password)
+                try:
+                    token = login_manager.login(username, password)
+                    if token is None:
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Invalid username or password")
+                        continue
 
-                with console_lock:
-                    print(f"[CLIENT | {current_time()} | {username}] Login successful!")
-                    print(f"Token: {token}")
-                    print("WARNING: Ensure only one client is running with these credentials to avoid forced logouts.")
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Login successful")
+                        print(f"  Token: {token}")
+                        print(f"  WARNING: Ensure only one client is running with these credentials to avoid forced logouts")
 
-                # Menu loop
-                game_manager = GameManager(game_service, auth_service, poa)
-                while True:
-                    try:
-                        # Check for forced logout before any input or server check
-                        if forced_logout_flag.is_set():
+                    # Menu loop
+                    game_manager = GameManager(game_service, auth_service, poa)
+                    while True:
+                        try:
+                            # Check for forced logout before any input or server check
+                            if forced_logout_flag.is_set():
+                                with console_lock:
+                                    print(f"[CLIENT | {current_time()} | {username}] Forced logout detected. Returning to login")
+                                forced_logout_flag.clear()
+                                SessionManager.set_session_token(None)
+                                SessionManager.set_logged_in_player(None)
+                                break
+
+                            # Check server connection
+                            if not check_server_connection(game_service, username, token):
+                                new_token = reconnect_to_server(server_ip, username, password, token)
+                                if not new_token:
+                                    with console_lock:
+                                        print(f"[CLIENT | {current_time()} | {username}] Failed to reconnect. Returning to login")
+                                    break
+                                token = new_token
+                                auth_service = SessionManager.get_auth_service()
+                                game_service = SessionManager.get_game_service()
+                                login_manager = LoginManager(auth_service, poa)
+                                game_manager = GameManager(game_service, auth_service, poa)
+
+                            # Display menu and get user choice
+                            display_menu()
+                            choice = non_blocking_input(f"[CLIENT | {current_time()} | {username}] Select an option: ")
+                            if choice == 'forced_logout':
+                                with console_lock:
+                                    print(f"[CLIENT | {current_time()} | {username}] Forced logout detected. Returning to login")
+                                SessionManager.set_session_token(None)
+                                SessionManager.set_logged_in_player(None)
+                                break
+                            elif not choice:
+                                continue
+                            choice = choice.lower()
+                            if choice == "1":
+                                if not game_manager.start_game(username, token):
+                                    break
+                            elif choice == "2":
+                                with console_lock:
+                                    print(f"[CLIENT | {current_time()} | {username}] Leaderboard feature not implemented yet")
+                            elif choice == "3":
+                                about()
+                            elif choice == "4":
+                                with console_lock:
+                                    print(f"[CLIENT | {current_time()} | {username}] Logging out...")
+                                    print("----------")
+                                break
+                            elif choice == "exit":
+                                with console_lock:
+                                    print(f"[CLIENT | {current_time()} | {username}] Exiting login client")
+                                    print("----------")
+                                cleanup_orb()
+                                return
+                            else:
+                                with console_lock:
+                                    print(f"[CLIENT | {current_time()} | {username}] Invalid choice. Please enter 1, 2, 3, 4, or 'exit'")
+                        except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST) as e:
                             with console_lock:
-                                print(f"[CLIENT | {current_time()} | {username}] Forced logout detected. Returning to login.")
-                            forced_logout_flag.clear()
-                            SessionManager.set_session_token(None)
-                            SessionManager.set_logged_in_player(None)
-                            break
-
-                        # Check server connection
-                        if not check_server_connection(game_service, username, token):
+                                print(f"[CLIENT | {current_time()} | {username}] Server disconnected in menu: {e}")
                             new_token = reconnect_to_server(server_ip, username, password, token)
                             if not new_token:
                                 with console_lock:
-                                    print(f"[CLIENT | {current_time()} | {username}] Failed to reconnect. Returning to login.")
+                                    print(f"[CLIENT | {current_time()} | {username}] Failed to reconnect. Returning to login")
                                 break
                             token = new_token
                             auth_service = SessionManager.get_auth_service()
                             game_service = SessionManager.get_game_service()
                             login_manager = LoginManager(auth_service, poa)
                             game_manager = GameManager(game_service, auth_service, poa)
-
-                        # Display menu and get user choice
-                        display_menu()
-                        choice = non_blocking_input(f"[CLIENT | {current_time()} | {username}] Select an option: ")
-                        if choice == 'forced_logout':
-                            with console_lock:
-                                print(f"[CLIENT | {current_time()} | {username}] Forced logout detected. Returning to login.")
-                            SessionManager.set_session_token(None)
-                            SessionManager.set_logged_in_player(None)
-                            break
-                        elif not choice:
-                            continue
-                        choice = choice.lower()
-                        if choice == "1":
-                            if not game_manager.start_game(username, token):
-                                break
-                        elif choice == "2":
-                            with console_lock:
-                                print("Leaderboard feature not implemented yet.")
-                        elif choice == "3":
-                            about()
-                        elif choice == "4":
-                            with console_lock:
-                                print(f"[CLIENT | {current_time()} | {username}] Logging Out...")
-                            break
-                        elif choice == "exit":
-                            with console_lock:
-                                print("Exiting login client.")
-                            cleanup_orb()
-                            return
-                        else:
-                            with console_lock:
-                                print(f"[CLIENT | {current_time()} | {username}] Invalid choice. Please enter 1, 2, 3, 4, or 'exit'.")
-                    except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST) as e:
-                        with console_lock:
-                            print(f"[CLIENT | {current_time()} | {username}] Server disconnected in menu: {e}")
-                        new_token = reconnect_to_server(server_ip, username, password, token)
-                        if not new_token:
-                            with console_lock:
-                                print(f"[CLIENT | {current_time()} | {username}] Failed to reconnect. Returning to login.")
-                            break
-                        token = new_token
-                        auth_service = SessionManager.get_auth_service()
-                        game_service = SessionManager.get_game_service()
-                        login_manager = LoginManager(auth_service, poa)
-                        game_manager = GameManager(game_service, auth_service, poa)
-
-                        # Display menu and get user choice
-                        display_menu()
-                        choice = non_blocking_input(f"[CLIENT | {current_time()} | {username}] Select an option: ")
-                        if choice is None:
-                            continue
-
-                        if not choice:
-                            continue
-                        choice = choice.lower()
-                        if choice == "1":
-                            if not game_manager.start_game(username, token):
-                                break
-                        elif choice == "2":
-                            with console_lock:
-                                print("Leaderboard feature not implemented yet.")
-                        elif choice == "3":
-                            about()
-                        elif choice == "4":
-                            with console_lock:
-                                print(f"[CLIENT | {current_time()} | {username}] Logging Out...")
-                            break
-                        elif choice == "exit":
-                            with console_lock:
-                                print("Exiting login client.")
-                            cleanup_orb()
-                            return
-                        else:
-                            with console_lock:
-                                print(f"[CLIENT | {current_time()} | {username}] Invalid choice. Please enter 1, 2, 3, 4, or 'exit'.")
-                    except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST) as e:
-                        with console_lock:
-                            print(f"[CLIENT | {current_time()} | {username}] Server disconnected in menu: {e}")
-                        new_token = reconnect_to_server(server_ip, username, password, token)
-                        if not new_token:
-                            with console_lock:
-                                print(f"[CLIENT | {current_time()} | {username}] Failed to reconnect. Returning to login.")
-                            break
-                        token = new_token
-                        auth_service = SessionManager.get_auth_service()
-                        game_service = SessionManager.get_game_service()
-                        login_manager = LoginManager(auth_service, poa)
-                        game_manager = GameManager(game_service, auth_service, poa)
+                except AuthenticationIDL.AuthenticationException:
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Invalid username or password")
+                    continue
 
             except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST) as e:
                 with console_lock:
@@ -319,13 +298,13 @@ def main():
                     orb_thread = SessionManager.get_orb_thread()
                     login_manager = LoginManager(auth_service, poa)
                     with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Login successful after reconnection!")
-                        print(f"Token: {token}")
-                        print("WARNING: Ensure only one client is running with these credentials to avoid forced logouts.")
+                        print(f"[CLIENT | {current_time()} | {username}] Login successful")
+                        print(f"  Token: {token}")
+                        print(f"  WARNING: Ensure only one client is running with these credentials to avoid forced logouts")
                 else:
                     with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Login failed: Unable to reconnect to server.")
-                        print("Please try again or check server status.")
+                        print(f"[CLIENT | {current_time()} | {username}] Login failed: Unable to reconnect to server")
+                        print("  Please try again or check server status")
                     cleanup_orb()
                     orb = None
                     poa = None
