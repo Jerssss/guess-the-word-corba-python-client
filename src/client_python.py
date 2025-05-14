@@ -9,6 +9,7 @@ from session import SessionManager
 from player import PlayerAccount
 from login import LoginManager
 from game import GameManager
+from leaderboard import LeaderboardManager
 from connection import initialize_orb, reconnect_to_server, check_server_connection, cleanup_orb
 from common import current_time, console_lock, forced_logout_flag
 from utils import display_menu, is_valid_ip_or_hostname, non_blocking_input, about
@@ -205,6 +206,7 @@ def main():
 
                     # Menu loop
                     game_manager = GameManager(game_service, auth_service, poa)
+                    leaderboard_manager = LeaderboardManager(game_service, SessionManager.get_logged_in_player())
                     while True:
                         try:
                             # Check for forced logout before any input or server check
@@ -228,6 +230,7 @@ def main():
                                 game_service = SessionManager.get_game_service()
                                 login_manager = LoginManager(auth_service, poa)
                                 game_manager = GameManager(game_service, auth_service, poa)
+                                leaderboard_manager = LeaderboardManager(game_service, SessionManager.get_logged_in_player())
 
                             # Display menu and get user choice
                             display_menu()
@@ -245,8 +248,15 @@ def main():
                                 if not game_manager.start_game(username, token):
                                     break
                             elif choice == "2":
-                                with console_lock:
-                                    print(f"[CLIENT | {current_time()} | {username}] Leaderboard feature not implemented yet")
+                                session_token, _ = token
+                                leaderboard_data = leaderboard_manager.get_leaderboard_data(session_token)
+                                user_info = leaderboard_manager.get_current_user_info(session_token, leaderboard_data)
+                                if user_info:
+                                    with console_lock:
+                                        print(f"\n[CLIENT | {current_time()} | {username}] Your Stats:")
+                                        print(f"  Rank: #{user_info['rank']}")
+                                        print(f"  Username: {user_info['username']}")
+                                        print(f"  Points: {user_info['points']}")
                             elif choice == "3":
                                 about()
                             elif choice == "4":
@@ -276,9 +286,15 @@ def main():
                             game_service = SessionManager.get_game_service()
                             login_manager = LoginManager(auth_service, poa)
                             game_manager = GameManager(game_service, auth_service, poa)
+                            leaderboard_manager = LeaderboardManager(game_service, SessionManager.get_logged_in_player())
                 except AuthenticationIDL.AuthenticationException:
                     with console_lock:
                         print(f"[CLIENT | {current_time()} | {username}] Invalid username or password")
+                    continue
+                except AuthenticationIDL.ConcurrentLoginException:
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Concurrent login detected. Only one session is allowed per user.")
+                        print(f"[CLIENT | {current_time()} | {username}] Please ensure no other clients are using these credentials and try again.")
                     continue
 
             except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST) as e:
