@@ -305,6 +305,10 @@ class GameManager:
             lobby_wait_time = controller.get_setting("countdown_to_game_start")
             player_count = 0
             for remaining in range(lobby_wait_time, -1, -1):
+                if forced_logout_flag.is_set():
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Forced logout detected. Returning to login.")
+                    return False
                 try:
                     player_count = self.game_service.getNumberOfPlayersJoined(player_id, session_token)
                     with console_lock:
@@ -407,7 +411,12 @@ class GameManager:
             from login import LoginManager
             login_manager = LoginManager(self.auth_service, self.poa)
             time.sleep(2)
-            new_token = login_manager.reauthenticate(username, SessionManager.get_logged_in_player().password)
+            player = SessionManager.get_logged_in_player()
+            if not player or not hasattr(player, 'password'):
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] No valid player data available for re-authentication. Returning to login.")
+                return False
+            new_token = login_manager.reauthenticate(username, player.password)
             if new_token:
                 SessionManager.set_session_token(new_token)
                 return self.start_game(username, new_token)

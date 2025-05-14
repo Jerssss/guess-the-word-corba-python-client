@@ -291,7 +291,7 @@ def main():
                     with console_lock:
                         print(f"[CLIENT | {current_time()} | {username}] Invalid username or password")
                     continue
-                except AuthenticationIDL.ConcurrentLoginException:
+                except AuthenticationIDL.AlreadyLoggedInException:
                     with console_lock:
                         print(f"[CLIENT | {current_time()} | {username}] Concurrent login detected. Only one session is allowed per user.")
                         print(f"[CLIENT | {current_time()} | {username}] Please ensure no other clients are using these credentials and try again.")
