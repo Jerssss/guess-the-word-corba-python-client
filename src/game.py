@@ -38,12 +38,14 @@ class GameController:
                 if val is None or val.strip() == "":
                     with console_lock:
                         print(f"[CLIENT | {current_time()}] Warning: Setting '{server_key}' is empty or null, using default value.")
-                    return 60 if key == "round_time" else 0
+                        print(f"[CLIENT | {current_time()}] Note: If settings were recently changed, the server may need to be restarted to apply updates.")
+                    return 60 if key == "round_time" else 10 if key == "countdown_to_game_start" else 0
                 return int(val)
             except ValueError:
                 with console_lock:
                     print(f"[CLIENT | {current_time()}] Warning: Invalid value '{val}' for setting '{server_key}', using default.")
-                return 60 if key == "round_time" else 0
+                    print(f"[CLIENT | {current_time()}] Note: If settings were recently changed, the server may need to be restarted to apply updates.")
+                return 60 if key == "round_time" else 10 if key == "countdown_to_game_start" else 0
             except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST) as e:
                 with console_lock:
                     print(f"[CLIENT | {current_time()}] CORBA error getting setting '{server_key}' (attempt {attempt + 1}/{max_retries}): {e}")
@@ -52,11 +54,13 @@ class GameController:
                     continue
                 with console_lock:
                     print(f"[CLIENT | {current_time()}] Failed to get setting '{server_key}' after {max_retries} attempts, using default.")
-                return 60 if key == "round_time" else 0
+                    print(f"[CLIENT | {current_time()}] Note: If settings were recently changed, the server may need to be restarted to apply updates.")
+                return 60 if key == "round_time" else 10 if key == "countdown_to_game_start" else 0
             except Exception as e:
                 with console_lock:
                     print(f"[CLIENT | {current_time()}] Unexpected error getting setting '{server_key}': {e}")
-                return 60 if key == "round_time" else 0
+                    print(f"[CLIENT | {current_time()}] Note: If settings were recently changed, the server may need to be restarted to apply updates.")
+                return 60 if key == "round_time" else 10 if key == "countdown_to_game_start" else 0
 
     def handle_round_start(self, round_no):
         if self.current_round == round_no:
@@ -207,12 +211,15 @@ class GameManager:
         self.game_service = game_service
         self.auth_service = auth_service
         self.poa = poa
+        self.reauth_attempts = 0
+        self.max_reauth_attempts = 3
 
     def register_game_callback(self, callback_servant):
         return self.poa.servant_to_reference(callback_servant)
 
     def start_game(self, username, token):
         session_token, player_id = token
+        self.reauth_attempts = 0  # Reset re-authentication attempts
         with console_lock:
             print(f"[CLIENT | {current_time()} | {username}] Starting a new game...")
             print(f"[CLIENT | {current_time()} | {username}] Joining the waiting room...")
@@ -224,16 +231,27 @@ class GameManager:
                 return False
 
             time.sleep(0.5)
-            game_token = self.game_service.joinLobby(player_id, session_token)
+            try:
+                game_token = self.game_service.joinLobby(player_id, session_token)
+            except GameIDL.NotLoggedInException as e:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Session invalid during joinLobby: {e}")
+                raise
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Joined waiting room: {game_token}")
 
+            controller = GameController(self.game_service, player_id, session_token, game_token)
+            lobby_wait_time = controller.get_setting("countdown_to_game_start")
             player_count = 0
-            for remaining in range(10, -1, -1):
+            for remaining in range(lobby_wait_time, -1, -1):
                 try:
                     player_count = self.game_service.getNumberOfPlayersJoined(player_id, session_token)
                     with console_lock:
                         print(f"[CLIENT | {current_time()} | {username}] Waiting for players... {remaining} seconds left, current players: {player_count}")
+                except GameIDL.NotLoggedInException as e:
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Session invalid during getNumberOfPlayersJoined: {e}")
+                    raise
                 except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST) as e:
                     with console_lock:
                         print(f"[CLIENT | {current_time()} | {username}] Server disconnected during lobby: {e}")
@@ -260,11 +278,10 @@ class GameManager:
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Countdown finished. Current players: {player_count}")
                 if player_count < 2:
-                    print(f"[CLIENT | {current_time()} | {username}] Not enough players joined within 10 seconds. Returning to home screen.")
+                    print(f"[CLIENT | {current_time()} | {username}] Not enough players joined within {lobby_wait_time} seconds. Returning to home screen.")
                     return True
                 print(f"[CLIENT | {current_time()} | {username}] Enough players joined! Starting game...")
 
-            controller = GameController(self.game_service, player_id, session_token, game_token)
             callback_servant = GameCallbackServant(controller)
             callback_ref = self.register_game_callback(callback_servant)
             self.game_service.registerCallBack(player_id, game_token, session_token, callback_ref)
@@ -318,15 +335,27 @@ class GameManager:
                 return False
             return self.start_game(username, new_token)
 
-        except GameIDL.NotLoggedInException:
+        except GameIDL.NotLoggedInException as e:
+            if self.reauth_attempts >= self.max_reauth_attempts:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Max re-authentication attempts ({self.max_reauth_attempts}) reached. Please ensure only one client is running and try logging in again.")
+                    print(f"[CLIENT | {current_time()} | {username}] If this persists, check server session management or contact the administrator.")
+                return False
+            self.reauth_attempts += 1
             with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Session invalid (NotLoggedInException). Attempting to re-authenticate...")
+                print(f"[CLIENT | {current_time()} | {username}] Session invalid (NotLoggedInException, attempt {self.reauth_attempts}/{self.max_reauth_attempts}): {e}")
+                print(f"[CLIENT | {current_time()} | {username}] Ensure only one client is running with these credentials.")
             from login import LoginManager
             login_manager = LoginManager(self.auth_service, self.poa)
+            time.sleep(2)  # Delay to avoid rapid re-authentication
             new_token = login_manager.reauthenticate(username, SessionManager.get_logged_in_player().password)
             if new_token:
+                SessionManager.set_session_token(new_token)
                 return self.start_game(username, new_token)
+            with console_lock:
+                print(f"[CLIENT | {current_time()} | {username}] Re-authentication failed. Returning to login.")
             return False
+
         except GameIDL.NotEnoughPlayersException:
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Not enough players to start the game after waiting.")
