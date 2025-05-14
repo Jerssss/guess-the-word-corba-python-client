@@ -65,7 +65,7 @@ module GameIDL {
             raises(GameNotFoundException, NotLoggedInException);
 
         // ─── Letter Guessing ───────────────────────────────────────────
-        IndexList guessLetter(in string gameToken, in long playerID, in string sessionToken, in char letter)
+        IndexList guessLetter(in string gameToken, in long playerID, in string sessionToken, in char letter, in long guessTime)
             raises(MaxAttemptsReachedException, GameNotFoundException, AlreadyGuessedLetterException, NotLoggedInException);
 
         // ─── Game and Round Results ───────────────────────────────────
