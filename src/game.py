@@ -33,7 +33,7 @@ class GameController:
             try:
                 val = self.game_service.getSetting(server_key, self.session_token)
                 with console_lock:
-                    print(f"[DEBUG | {current_time()}] Got setting '{server_key}' = '{val}' from server")
+                    print(f"[CLIENT | {current_time()}] Got setting '{server_key}' = '{val}' from server")
                 if val is None or val.strip() == "":
                     with console_lock:
                         print(f"[CLIENT | {current_time()}] Warning: Setting '{server_key}' is empty or null, using default value.")
