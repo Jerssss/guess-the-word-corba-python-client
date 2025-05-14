@@ -25,11 +25,16 @@ class GameController:
         self.champion = ""
         self.rounds_ended = set()
         self.player_wins = {}  # Track wins per player
+        self.processed_rounds = set()  # Track processed round callbacks
 
     def get_setting(self, key):
         server_key = "round_duration" if key == "round_time" else key
         max_retries = 3
         for attempt in range(max_retries):
+            if forced_logout_flag.is_set():
+                with console_lock:
+                    print(f"[CLIENT | {current_time()}] Forced logout detected while getting setting '{server_key}'. Aborting.")
+                return 60 if key == "round_time" else 10 if key == "countdown_to_game_start" else 0
             try:
                 val = self.game_service.getSetting(server_key, self.session_token)
                 with console_lock:
@@ -37,13 +42,11 @@ class GameController:
                 if val is None or val.strip() == "":
                     with console_lock:
                         print(f"[CLIENT | {current_time()}] Warning: Setting '{server_key}' is empty or null, using default value.")
-                        print(f"[CLIENT | {current_time()}] Note: If settings were recently changed, the server may need to be restarted to apply updates.")
                     return 60 if key == "round_time" else 10 if key == "countdown_to_game_start" else 0
                 return int(val)
             except ValueError:
                 with console_lock:
                     print(f"[CLIENT | {current_time()}] Warning: Invalid value '{val}' for setting '{server_key}', using default.")
-                    print(f"[CLIENT | {current_time()}] Note: If settings were recently changed, the server may need to be restarted to apply updates.")
                 return 60 if key == "round_time" else 10 if key == "countdown_to_game_start" else 0
             except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST, CORBA.UNKNOWN) as e:
                 with console_lock:
@@ -53,43 +56,122 @@ class GameController:
                     continue
                 with console_lock:
                     print(f"[CLIENT | {current_time()}] Failed to get setting '{server_key}' after {max_retries} attempts, using default.")
-                    print(f"[CLIENT | {current_time()}] Note: If settings were recently changed, the server may need to be restarted to apply updates.")
                 return 60 if key == "round_time" else 10 if key == "countdown_to_game_start" else 0
             except Exception as e:
                 with console_lock:
                     print(f"[CLIENT | {current_time()}] Unexpected error getting setting '{server_key}': {e}")
-                    print(f"[CLIENT | {current_time()}] Note: If settings were recently changed, the server may need to be restarted to apply updates.")
                 return 60 if key == "round_time" else 10 if key == "countdown_to_game_start" else 0
 
     def handle_round_start(self, round_no):
-        if self.current_round == round_no:
+        # Ignore duplicate or outdated round callbacks
+        if round_no <= self.current_round or round_no in self.processed_rounds:
+            with console_lock:
+                print(f"[CLIENT | {current_time()}] Ignoring duplicate or outdated round {round_no} callback")
             return
+        self.processed_rounds.add(round_no)
         self.current_round = round_no
+
+        # Reset round state
+        self.secret_word = ""
+        self.revealed_word = []
+        self.lives = 0
+        self.round_time_limit = 0
+        self.round_start_time = 0
+        self.round_ended.clear()
+
+        with console_lock:
+            print(f"[CLIENT | {current_time()}] Initializing round {round_no} with game_token={self.game_token}, session_token={self.session_token}")
+
+        # Check for forced logout before proceeding
+        if forced_logout_flag.is_set():
+            with console_lock:
+                print(f"[CLIENT | {current_time()}] Forced logout detected before starting round {round_no}. Ending round.")
+            self.round_ended.set()
+            return
+
+        # Attempt to get random word
         try:
             self.secret_word = self.game_service.getRandomWord(self.game_token, round_no, self.player_id, self.session_token)
             if not self.secret_word:
                 with console_lock:
-                    print(f"Error: Empty secret word received for round {round_no}.")
+                    print(f"[CLIENT | {current_time()}] Error: Empty secret word received for round {round_no}. Ending round.")
                 self.round_ended.set()
                 return
+
             self.revealed_word = ['_'] * len(self.secret_word)
             self.lives = self.get_setting("number_of_lives")
             self.round_time_limit = self.get_setting("round_time")
             if self.round_time_limit <= 0:
                 with console_lock:
-                    print(f"Error: Invalid round time limit {self.round_time_limit}. Using default 60 seconds.")
+                    print(f"[CLIENT | {current_time()}] Error: Invalid round time limit {self.round_time_limit}. Using default 60 seconds.")
                 self.round_time_limit = 60
             self.round_start_time = time.time()
-            self.round_ended.clear()
+
             with console_lock:
-                print(f"\nRound {round_no} started!")
-                print(f"Word to guess: {' '.join(self.revealed_word)}")
-                print(f"Lives: {self.lives}")
-                print(f"Time limit: {self.round_time_limit} seconds")
+                print(f"\n[CLIENT | {current_time()}] Round {round_no} started!")
+                print(f"[CLIENT | {current_time()}] Word to guess: {' '.join(self.revealed_word)}")
+                print(f"[CLIENT | {current_time()}] Lives: {self.lives}")
+                print(f"[CLIENT | {current_time()}] Time limit: {self.round_time_limit} seconds")
             self.round_started.set()
+
+        except GameIDL.GameNotFoundException as e:
+            with console_lock:
+                print(f"[CLIENT | {current_time()}] GameNotFoundException in round {round_no}: {e}")
+                print(f"[CLIENT | {current_time()}] Game state not found. Ending round.")
+            self.round_ended.set()
+        except GameIDL.NotLoggedInException as e:
+            with console_lock:
+                print(f"[CLIENT | {current_time()}] Session invalid during getRandomWord for round {round_no}: {e}")
+                print(f"[CLIENT | {current_time()}] Attempting single re-authentication...")
+            player = SessionManager.get_logged_in_player()
+            if not player or not hasattr(player, 'password'):
+                with console_lock:
+                    print(f"[CLIENT | {current_time()}] No valid player data for re-authentication. Ending round.")
+                self.round_ended.set()
+                return
+            from login import LoginManager
+            login_manager = LoginManager(SessionManager.get_auth_service(), SessionManager.get_poa())
+            new_token = login_manager.reauthenticate(player.username, player.password)
+            if new_token:
+                self.session_token, self.player_id = new_token
+                SessionManager.set_session_token(new_token)
+                self.game_service = SessionManager.get_game_service()
+                with console_lock:
+                    print(f"[CLIENT | {current_time()}] Re-authenticated successfully. Retrying getRandomWord...")
+                try:
+                    self.secret_word = self.game_service.getRandomWord(self.game_token, round_no, self.player_id, self.session_token)
+                    if not self.secret_word:
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()}] Error: Empty secret word after re-auth for round {round_no}. Ending round.")
+                        self.round_ended.set()
+                        return
+                    self.revealed_word = ['_'] * len(self.secret_word)
+                    self.lives = self.get_setting("number_of_lives")
+                    self.round_time_limit = self.get_setting("round_time")
+                    if self.round_time_limit <= 0:
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()}] Error: Invalid round time limit {self.round_time_limit}. Using default 60 seconds.")
+                        self.round_time_limit = 60
+                    self.round_start_time = time.time()
+                    with console_lock:
+                        print(f"\n[CLIENT | {current_time()}] Round {round_no} started after re-auth!")
+                        print(f"[CLIENT | {current_time()}] Word to guess: {' '.join(self.revealed_word)}")
+                        print(f"[CLIENT | {current_time()}] Lives: {self.lives}")
+                        print(f"[CLIENT | {current_time()}] Time limit: {self.round_time_limit} seconds")
+                    self.round_started.set()
+                except Exception as retry_e:
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()}] Failed to get word after re-auth: {retry_e}")
+                        print(f"[CLIENT | {current_time()}] Please check server logs at 192.168.100.108 for details.")
+                    self.round_ended.set()
+            else:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()}] Re-authentication failed. Ending round.")
+                self.round_ended.set()
         except Exception as e:
             with console_lock:
-                print(f"Error starting round {round_no}: {e}")
+                print(f"[CLIENT | {current_time()}] Unexpected error starting round {round_no}: {e}")
+                print(f"[CLIENT | {current_time()}] Please check server logs at 192.168.100.108 for details.")
             self.round_ended.set()
 
     def play_round(self, username):
@@ -137,6 +219,11 @@ class GameController:
                     print(f"[CLIENT | {current_time()} | {username}] Invalid input. Please enter a single letter.")
                 continue
             for attempt in range(max_guess_retries):
+                if forced_logout_flag.is_set():
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Session invalidated during guess. Returning to login.")
+                    self.round_ended.set()
+                    break
                 try:
                     guess_time = int(time.time())  # Current Unix timestamp in seconds
                     positions = self.game_service.guessLetter(self.game_token, self.player_id, self.session_token, guess[0], guess_time)
@@ -171,37 +258,42 @@ class GameController:
                         print(f"[CLIENT | {current_time()} | {username}] Maximum attempts reached. Round over.")
                     self.round_ended.set()
                     break
-                except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST, CORBA.UNKNOWN) as e:
+                except GameIDL.NotLoggedInException as e:
                     with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] CORBA error during guess (attempt {attempt + 1}/{max_guess_retries}): {e}")
-                        print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.105 for details.")
-                    if attempt < max_guess_retries - 1:
-                        time.sleep(1)
-                        continue
-                    with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Failed to process guess after {max_guess_retries} attempts. Attempting to reconnect...")
+                        print(f"[CLIENT | {current_time()} | {username}] Session invalid during guess (attempt {attempt + 1}/{max_guess_retries}): {e}")
                     player = SessionManager.get_logged_in_player()
                     if not player:
                         with console_lock:
                             print(f"[CLIENT | {current_time()} | {username}] No player data available. Ending round.")
                         self.round_ended.set()
                         break
-                    from connection import reconnect_to_server
-                    new_token = reconnect_to_server(SessionManager.get_server_ip(), username, player.password, (self.session_token, self.player_id))
-                    if not new_token:
+                    from login import LoginManager
+                    login_manager = LoginManager(SessionManager.get_auth_service(), SessionManager.get_poa())
+                    new_token = login_manager.reauthenticate(player.username, player.password)
+                    if new_token:
+                        self.session_token, self.player_id = new_token
+                        self.game_service = SessionManager.get_game_service()
                         with console_lock:
-                            print(f"[CLIENT | {current_time()} | {username}] Reconnection failed. Ending round.")
-                        self.round_ended.set()
-                        break
-                    self.session_token, self.player_id = new_token
-                    self.game_service = SessionManager.get_game_service()
+                            print(f"[CLIENT | {current_time()} | {username}] Re-authenticated successfully for guess. Please try again.")
+                        continue
                     with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Reconnected successfully. Please try your guess again.")
-                    break  # Let the user retry the guess manually
+                        print(f"[CLIENT | {current_time()} | {username}] Re-authentication failed. Ending round.")
+                    self.round_ended.set()
+                    break
+                except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST, CORBA.UNKNOWN) as e:
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] CORBA error during guess (attempt {attempt + 1}/{max_guess_retries}): {e}")
+                    if attempt < max_guess_retries - 1:
+                        time.sleep(1)
+                        continue
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Failed to process guess after {max_guess_retries} attempts. Ending round.")
+                    self.round_ended.set()
+                    break
                 except Exception as e:
                     with console_lock:
                         print(f"[CLIENT | {current_time()} | {username}] Unexpected error during guess: {e}")
-                        print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.105 for details.")
+                        print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.108 for details.")
                     self.round_ended.set()
                     break
 
@@ -235,6 +327,7 @@ class GameController:
                     print(f"  {player}: {wins} win{'s' if wins != 1 else ''}")
             else:
                 print("  No wins recorded.")
+            print("Returning to lobby...")
 
 class GameCallbackServant(PlayerCallBackIDL__POA.GameCallBackService):
     def __init__(self, controller):
@@ -250,7 +343,7 @@ class GameCallbackServant(PlayerCallBackIDL__POA.GameCallBackService):
         if self.controller.game_ended.is_set():
             return  # Ignore callback if game has ended
         with console_lock:
-            print(f"\n[Callback] Round {roundNumber} started")
+            print(f"\n[Callback] Round {roundNumber} started with gameToken={gameToken}, sessionToken={sessionToken}")
         self.controller.handle_round_start(roundNumber)
 
     def notifyRoundEnd(self, gameToken, sessionToken, winnerName, secretWord):
@@ -292,12 +385,17 @@ class GameManager:
                 return False
 
             time.sleep(0.5)
+            if forced_logout_flag.is_set():
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Forced logout detected before joining lobby. Returning to login.")
+                return False
             try:
                 game_token = self.game_service.joinLobby(player_id, session_token)
             except GameIDL.NotLoggedInException as e:
                 with console_lock:
                     print(f"[CLIENT | {current_time()} | {username}] Session invalid during joinLobby: {e}")
-                raise
+                    print(f"[CLIENT | {current_time()} | {username}] Please log in again.")
+                return False
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Joined waiting room: {game_token}")
 
@@ -316,36 +414,25 @@ class GameManager:
                 except GameIDL.NotLoggedInException as e:
                     with console_lock:
                         print(f"[CLIENT | {current_time()} | {username}] Session invalid during getNumberOfPlayersJoined: {e}")
-                    raise
+                        print(f"[CLIENT | {current_time()} | {username}] Please log in again.")
+                    return False
                 except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST, CORBA.UNKNOWN) as e:
                     with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Server disconnected during lobby: {e}")
-                    player = SessionManager.get_logged_in_player()
-                    if not player:
-                        with console_lock:
-                            print(f"[CLIENT | {current_time()} | {username}] No player data available. Returning to login.")
-                        return False
-                    from connection import reconnect_to_server
-                    new_token = reconnect_to_server(SessionManager.get_server_ip(), username, player.password, token)
-                    if not new_token:
-                        return False
-                    token = new_token
-                    session_token, player_id = token
-                    self.game_service = SessionManager.get_game_service()
-                    self.auth_service = SessionManager.get_auth_service()
-                    game_token = self.game_service.joinLobby(player_id, session_token)
-                    with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Rejoined waiting room: {game_token}")
-                    player_count = self.game_service.getNumberOfPlayersJoined(player_id, session_token)
-                    with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Waiting for players... {remaining} seconds left, current players: {player_count}")
-                time.sleep(1)
+                        print(f"[CLIENT | {current_time()} | {username}] CORBA error during getNumberOfPlayersJoined: {e}")
+                        print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.108 for details.")
+                    return False
+                time.sleep(2)  # Increased interval to reduce server load
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Countdown finished. Current players: {player_count}")
                 if player_count < 2:
                     print(f"[CLIENT | {current_time()} | {username}] Not enough players joined within {lobby_wait_time} seconds. Returning to home screen.")
                     return True
                 print(f"[CLIENT | {current_time()} | {username}] Enough players joined! Starting game...")
+
+            if forced_logout_flag.is_set():
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Forced logout detected before starting round. Returning to login.")
+                return False
 
             callback_servant = GameCallbackServant(controller)
             callback_ref = self.register_game_callback(callback_servant)
@@ -386,49 +473,15 @@ class GameManager:
 
         except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST, CORBA.UNKNOWN) as e:
             with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Server disconnected during game: {e}")
-            player = SessionManager.get_logged_in_player()
-            if not player:
-                with console_lock:
-                    print(f"[CLIENT | {current_time()} | {username}] No player data available. Returning to login.")
-                return False
-            from connection import reconnect_to_server
-            new_token = reconnect_to_server(SessionManager.get_server_ip(), username, player.password, token)
-            if not new_token:
-                return False
-            return self.start_game(username, new_token)
-
-        except GameIDL.NotLoggedInException as e:
-            if self.reauth_attempts >= self.max_reauth_attempts:
-                with console_lock:
-                    print(f"[CLIENT | {current_time()} | {username}] Max re-authentication attempts ({self.max_reauth_attempts}) reached. Please ensure only one client is running and try logging in again.")
-                    print(f"[CLIENT | {current_time()} | {username}] If this persists, check server session management or contact the administrator.")
-                return False
-            self.reauth_attempts += 1
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Session invalid (NotLoggedInException, attempt {self.reauth_attempts}/{self.max_reauth_attempts}): {e}")
-                print(f"[CLIENT | {current_time()} | {username}] Ensure only one client is running with these credentials.")
-            from login import LoginManager
-            login_manager = LoginManager(self.auth_service, self.poa)
-            time.sleep(2)
-            player = SessionManager.get_logged_in_player()
-            if not player or not hasattr(player, 'password'):
-                with console_lock:
-                    print(f"[CLIENT | {current_time()} | {username}] No valid player data available for re-authentication. Returning to login.")
-                return False
-            new_token = login_manager.reauthenticate(username, player.password)
-            if new_token:
-                SessionManager.set_session_token(new_token)
-                return self.start_game(username, new_token)
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Re-authentication failed. Returning to login.")
+                print(f"[CLIENT | {current_time()} | {username}] CORBA error during game: {e}")
+                print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.108 for details.")
             return False
-
         except GameIDL.NotEnoughPlayersException:
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Not enough players to start the game after waiting.")
             return True
         except Exception as e:
             with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Error during game: {e}")
-            return True
+                print(f"[CLIENT | {current_time()} | {username}] Unexpected error during game: {e}")
+                print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.108 for details.")
+            return False
