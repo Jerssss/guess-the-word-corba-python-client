@@ -181,7 +181,8 @@ class GameController:
                 with console_lock:
                     print(f"\n[CLIENT | {current_time()} | {username}] Session invalidated. Returning to login.")
                 self.round_ended.set()
-                break
+                self.game_ended.set()  # Ensure game ends
+                return
             elapsed_time = time.time() - self.round_start_time
             rem_time = max(0, self.round_time_limit - elapsed_time)
             if rem_time <= 0:
@@ -199,7 +200,8 @@ class GameController:
                 with console_lock:
                     print(f"\n[CLIENT | {current_time()} | {username}] Session invalidated. Returning to login.")
                 self.round_ended.set()
-                break
+                self.game_ended.set()  # Ensure game ends
+                return
             if guess.lower() == 'quit':
                 try:
                     self.game_service.leaveLobby(self.player_id, self.game_token, self.session_token)
@@ -227,6 +229,12 @@ class GameController:
                 try:
                     guess_time = int(time.time())  # Current Unix timestamp in seconds
                     positions = self.game_service.guessLetter(self.game_token, self.player_id, self.session_token, guess[0], guess_time)
+                    if forced_logout_flag.is_set():
+                        with console_lock:
+                            print(f"\n[CLIENT | {current_time()} | {username}] Session invalidated. Returning to login.")
+                        self.round_ended.set()
+                        self.game_ended.set()  # Ensure game ends
+                        return
                     if positions:
                         valid_positions = [pos for pos in positions if 0 <= pos < len(self.revealed_word)]
                         if len(valid_positions) < len(positions):
@@ -295,7 +303,8 @@ class GameController:
                         print(f"[CLIENT | {current_time()} | {username}] Unexpected error during guess: {e}")
                         print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.108 for details.")
                     self.round_ended.set()
-                    break
+                    self.game_ended.set()  # Ensure game ends
+                    return
 
     def handle_round_end(self, winner_name, secret_word):
         if self.current_round in self.rounds_ended:
@@ -334,28 +343,28 @@ class GameCallbackServant(PlayerCallBackIDL__POA.GameCallBackService):
         self.controller = controller
 
     def notifyGameStart(self, gameToken, sessionToken):
-        if self.controller.game_ended.is_set():
-            return  # Ignore callback if game has ended
+        if self.controller.game_ended.is_set() or forced_logout_flag.is_set():
+            return  # Ignore callback if game has ended or session is invalid
         with console_lock:
             print(f"\n[Callback] Game started with token {gameToken}")
 
     def notifyRoundStart(self, gameToken, roundNumber, sessionToken):
-        if self.controller.game_ended.is_set():
-            return  # Ignore callback if game has ended
+        if self.controller.game_ended.is_set() or forced_logout_flag.is_set():
+            return  # Ignore callback if game has ended or session is invalid
         with console_lock:
             print(f"\n[Callback] Round {roundNumber} started with gameToken={gameToken}, sessionToken={sessionToken}")
         self.controller.handle_round_start(roundNumber)
 
     def notifyRoundEnd(self, gameToken, sessionToken, winnerName, secretWord):
-        if self.controller.game_ended.is_set():
-            return  # Ignore callback if game has ended
+        if self.controller.game_ended.is_set() or forced_logout_flag.is_set():
+            return  # Ignore callback if game has ended or session is invalid
         with console_lock:
             print(f"\n[Callback] Round ended. Winner: {winnerName}, Word: {secretWord}")
         self.controller.handle_round_end(winnerName, secretWord)
 
     def notifyGameEnd(self, gameToken, sessionToken, winnerName):
-        if self.controller.game_ended.is_set():
-            return  # Ignore callback if game has ended
+        if self.controller.game_ended.is_set() or forced_logout_flag.is_set():
+            return  # Ignore callback if game has ended or session is invalid
         with console_lock:
             print(f"\n[Callback] Game ended. Winner: {winnerName}")
         self.controller.handle_game_end(winnerName)
@@ -447,6 +456,10 @@ class GameManager:
                     break
                 controller.round_started.clear()
                 controller.play_round(username)
+                if forced_logout_flag.is_set():
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Forced logout detected. Returning to login.")
+                    return False
                 if not controller.round_ended.wait(timeout=15):
                     with console_lock:
                         print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to end. Checking game status...")
