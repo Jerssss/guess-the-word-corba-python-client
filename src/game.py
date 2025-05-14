@@ -118,11 +118,20 @@ class GameController:
                     print(f"\n[CLIENT | {current_time()} | {username}] Session invalidated. Returning to login.")
                 self.round_ended.set()
                 break
-            if guess == 'QUIT':
-                with console_lock:
-                    print(f"[CLIENT | {current_time()} | {username}] Quitting the round...")
-                self.round_ended.set()
-                break
+            if guess.lower() == 'quit':
+                try:
+                    self.game_service.leaveLobby(self.player_id, self.game_token, self.session_token)
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Successfully left the game lobby.")
+                    self.game_ended.set()
+                    self.round_ended.set()
+                    return
+                except Exception as e:
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Error leaving lobby: {e}")
+                    self.game_ended.set()
+                    self.round_ended.set()
+                    return
             if len(guess) != 1 or not guess.isalpha():
                 with console_lock:
                     print(f"[CLIENT | {current_time()} | {username}] Invalid input. Please enter a single letter.")
@@ -232,20 +241,28 @@ class GameCallbackServant(PlayerCallBackIDL__POA.GameCallBackService):
         self.controller = controller
 
     def notifyGameStart(self, gameToken, sessionToken):
+        if self.controller.game_ended.is_set():
+            return  # Ignore callback if game has ended
         with console_lock:
             print(f"\n[Callback] Game started with token {gameToken}")
 
     def notifyRoundStart(self, gameToken, roundNumber, sessionToken):
+        if self.controller.game_ended.is_set():
+            return  # Ignore callback if game has ended
         with console_lock:
             print(f"\n[Callback] Round {roundNumber} started")
         self.controller.handle_round_start(roundNumber)
 
     def notifyRoundEnd(self, gameToken, sessionToken, winnerName, secretWord):
+        if self.controller.game_ended.is_set():
+            return  # Ignore callback if game has ended
         with console_lock:
             print(f"\n[Callback] Round ended. Winner: {winnerName}, Word: {secretWord}")
         self.controller.handle_round_end(winnerName, secretWord)
 
     def notifyGameEnd(self, gameToken, sessionToken, winnerName):
+        if self.controller.game_ended.is_set():
+            return  # Ignore callback if game has ended
         with console_lock:
             print(f"\n[Callback] Game ended. Winner: {winnerName}")
         self.controller.handle_game_end(winnerName)
