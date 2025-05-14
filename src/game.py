@@ -164,7 +164,7 @@ class GameController:
                     break
                 except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST, CORBA.UNKNOWN) as e:
                     with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] CORBA error during guess (attempt {attempt + 1}/{max_retries}): {e}")
+                        print(f"[CLIENT | {current_time()} | {username}] CORBA error during guess (attempt {attempt + 1}/{max_guess_retries}): {e}")
                         print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.105 for details.")
                     if attempt < max_guess_retries - 1:
                         time.sleep(1)
