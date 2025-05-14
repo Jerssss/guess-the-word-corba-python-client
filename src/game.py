@@ -27,21 +27,36 @@ class GameController:
         self.rounds_ended = set()
 
     def get_setting(self, key):
-        try:
-            val = self.game_service.getSetting(key, self.session_token)
-            if not val:
+        # Map client key to server column name
+        server_key = "round_duration" if key == "round_time" else key
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                val = self.game_service.getSetting(server_key, self.session_token)
                 with console_lock:
-                    print(f"Warning: Setting {key} is empty, using default value.")
+                    print(f"[DEBUG | {current_time()}] Got setting '{server_key}' = '{val}' from server")
+                if val is None or val.strip() == "":
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()}] Warning: Setting '{server_key}' is empty or null, using default value.")
+                    return 60 if key == "round_time" else 0
+                return int(val)
+            except ValueError:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()}] Warning: Invalid value '{val}' for setting '{server_key}', using default.")
                 return 60 if key == "round_time" else 0
-            return int(val)
-        except ValueError:
-            with console_lock:
-                print(f"Warning: Invalid {key} value, using default.")
-            return 60 if key == "round_time" else 0
-        except Exception as e:
-            with console_lock:
-                print(f"Warning: Error getting setting {key}: {e}, using default.")
-            return 60 if key == "round_time" else 0
+            except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST) as e:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()}] CORBA error getting setting '{server_key}' (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)  # Wait before retrying
+                    continue
+                with console_lock:
+                    print(f"[CLIENT | {current_time()}] Failed to get setting '{server_key}' after {max_retries} attempts, using default.")
+                return 60 if key == "round_time" else 0
+            except Exception as e:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()}] Unexpected error getting setting '{server_key}': {e}")
+                return 60 if key == "round_time" else 0
 
     def handle_round_start(self, round_no):
         if self.current_round == round_no:
@@ -56,12 +71,11 @@ class GameController:
                 return
             self.revealed_word = ['_'] * len(self.secret_word)
             self.lives = self.get_setting("number_of_lives")
-            self.round_time_limit = self.get_setting("round_time")
+            self.round_time_limit = self.get_setting("round_time")  # Maps to round_duration
             if self.round_time_limit <= 0:
                 with console_lock:
-                    print(f"Error: Invalid round time limit {self.round_time_limit}. Ending round.")
-                self.round_ended.set()
-                return
+                    print(f"Error: Invalid round time limit {self.round_time_limit}. Using default 60 seconds.")
+                self.round_time_limit = 60  # Default time
             self.round_start_time = time.time()
             self.round_ended.clear()
             with console_lock:
