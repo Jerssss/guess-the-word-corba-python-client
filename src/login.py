@@ -19,7 +19,7 @@ class LoginCallbackServant(PlayerCallBackIDL__POA.LoginCallbackService):
     def notifyForcedLogout(self, playerId, sessionToken):
         with console_lock:
             print(f"[Callback] Forced logout for player {playerId}, invalidating token: {sessionToken}")
-            print("Another client may have logged in with the same credentials. Please ensure only one client is active.")
+            print("Another client may have logged in with the same credentials. Please ensure only one client is active. Press enter to continue")
         SessionManager.set_session_token(None)
         SessionManager.set_logged_in_player(None)
         forced_logout_flag.set()
