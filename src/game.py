@@ -369,6 +369,13 @@ class GameCallbackServant(PlayerCallBackIDL__POA.GameCallBackService):
             print(f"\n[Callback] Game ended. Winner: {winnerName}")
         self.controller.handle_game_end(winnerName)
 
+    def notifyCountdownReset(self, gameToken, sessionToken):
+        if self.controller.game_ended.is_set() or forced_logout_flag.is_set():
+            return  # Ignore callback if game has ended or session is invalid
+        with console_lock:
+            print(f"\n[Callback] Lobby {gameToken} closed due to insufficient players. Returning to home screen.")
+        self.controller.game_ended.set()  # Signal game end to exit the game loop
+
 class GameManager:
     def __init__(self, game_service, auth_service, poa):
         self.game_service = game_service
@@ -435,64 +442,108 @@ class GameManager:
                 print(f"[CLIENT | {current_time()} | {username}] Countdown finished. Current players: {player_count}")
                 if player_count < 2:
                     print(f"[CLIENT | {current_time()} | {username}] Not enough players joined within {lobby_wait_time} seconds. Returning to home screen.")
+                    try:
+                        self.game_service.leaveLobby(player_id, game_token, session_token)
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Successfully left the game lobby.")
+                    except Exception as e:
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Error leaving lobby: {e}")
                     return True
                 print(f"[CLIENT | {current_time()} | {username}] Enough players joined! Starting game...")
 
-            if forced_logout_flag.is_set():
-                with console_lock:
-                    print(f"[CLIENT | {current_time()} | {username}] Forced logout detected before starting round. Returning to login.")
-                return False
-
-            callback_servant = GameCallbackServant(controller)
-            callback_ref = self.register_game_callback(callback_servant)
-            self.game_service.registerCallBack(player_id, game_token, session_token, callback_ref)
-
-            self.game_service.startRound(game_token, 1, player_id, session_token)
-
-            while not controller.game_ended.is_set() and not forced_logout_flag.is_set():
-                if not controller.round_started.wait(timeout=30):
-                    with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to start. Exiting game.")
-                    break
-                controller.round_started.clear()
-                controller.play_round(username)
+            try:
                 if forced_logout_flag.is_set():
                     with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Forced logout detected. Returning to login.")
+                        print(f"[CLIENT | {current_time()} | {username}] Forced logout detected before starting round. Returning to login.")
                     return False
-                if not controller.round_ended.wait(timeout=15):
-                    with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to end. Checking game status...")
-                    if controller.game_ended.is_set():
-                        break
-                controller.round_ended.clear()
-                with console_lock:
-                    print(f"[CLIENT | {current_time()} | {username}] Round {controller.current_round} ended. Winner: {controller.winner_name}, Word: {controller.secret_word}")
 
-            if not controller.game_ended.is_set() and not forced_logout_flag.is_set():
-                with console_lock:
-                    print(f"[CLIENT | {current_time()} | {username}] Waiting for game to officially end...")
-                if not controller.game_ended.wait(timeout=60):
+                callback_servant = GameCallbackServant(controller)
+                callback_ref = self.register_game_callback(callback_servant)
+                self.game_service.registerCallBack(player_id, game_token, session_token, callback_ref)
+
+                self.game_service.startRound(game_token, 1, player_id, session_token)
+
+                while not controller.game_ended.is_set() and not forced_logout_flag.is_set():
+                    if not controller.round_started.wait(timeout=30):
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to start. Exiting game.")
+                        break
+                    controller.round_started.clear()
+                    controller.play_round(username)
+                    if forced_logout_flag.is_set():
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Forced logout detected. Returning to login.")
+                        return False
+                    if not controller.round_ended.wait(timeout=15):
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for round {controller.current_round} to end. Checking game status...")
+                        if controller.game_ended.is_set():
+                            break
+                    controller.round_ended.clear()
                     with console_lock:
-                        print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for game to end. Forcing exit.")
+                        print(f"[CLIENT | {current_time()} | {username}] Round {controller.current_round} ended. Winner: {controller.winner_name}, Word: {controller.secret_word}")
+
+                if not controller.game_ended.is_set() and not forced_logout_flag.is_set():
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Waiting for game to officially end...")
+                    if not controller.game_ended.wait(timeout=60):
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Timeout waiting for game to end. Forcing exit.")
+                    else:
+                        with console_lock:
+                            print(f"[CLIENT | {current_time()} | {username}] Game ended. Overall winner: {controller.champion}")
                 else:
                     with console_lock:
                         print(f"[CLIENT | {current_time()} | {username}] Game ended. Overall winner: {controller.champion}")
-            else:
-                with console_lock:
-                    print(f"[CLIENT | {current_time()} | {username}] Game ended. Overall winner: {controller.champion}")
 
-            return True
+                return True
+
+            except GameIDL.GameNotFoundException as e:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Game not found: {e}")
+                    print(f"[CLIENT | {current_time()} | {username}] The lobby may have been closed due to insufficient players. Returning to home screen.")
+                try:
+                    self.game_service.leaveLobby(player_id, game_token, session_token)
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Successfully left the game lobby.")
+                except Exception as leave_e:
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Error leaving lobby: {leave_e}")
+                return True
+            except GameIDL.NotEnoughPlayersException as e:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Not enough players to start the game: {e}")
+                    print(f"[CLIENT | {current_time()} | {username}] Returning to home screen.")
+                try:
+                    self.game_service.leaveLobby(player_id, game_token, session_token)
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Successfully left the game lobby.")
+                except Exception as leave_e:
+                    with console_lock:
+                        print(f"[CLIENT | {current_time()} | {username}] Error leaving lobby: {leave_e}")
+                return True
+            except GameIDL.NotLoggedInException as e:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Session invalid: {e}")
+                    print(f"[CLIENT | {current_time()} | {username}] Please log in again.")
+                return False
+            except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST, CORBA.UNKNOWN) as e:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] CORBA error during game: {e}")
+                    print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.108 for details.")
+                return False
+            except Exception as e:
+                with console_lock:
+                    print(f"[CLIENT | {current_time()} | {username}] Unexpected error during game: {e}")
+                    print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.108 for details.")
+                return False
 
         except (CORBA.COMM_FAILURE, CORBA.TRANSIENT, CORBA.OBJECT_NOT_EXIST, CORBA.UNKNOWN) as e:
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] CORBA error during game: {e}")
                 print(f"[CLIENT | {current_time()} | {username}] Please check server logs at 192.168.100.108 for details.")
             return False
-        except GameIDL.NotEnoughPlayersException:
-            with console_lock:
-                print(f"[CLIENT | {current_time()} | {username}] Not enough players to start the game after waiting.")
-            return True
         except Exception as e:
             with console_lock:
                 print(f"[CLIENT | {current_time()} | {username}] Unexpected error during game: {e}")
